@@ -1,3 +1,8 @@
+import os
+import pprint
+import glob
+
+import pandas as pd
 import numpy as np
 
 import soundfile as sf
@@ -8,7 +13,9 @@ import demucs.pretrained
 import demucs.apply
 from demucs.audio import convert_audio
 
-def separate_vocals(audio_path: str, model: demucs.apply.BagOfModels) -> tuple[np.ndarray, np.ndarray, int]:
+def separate_vocals(audio_path: str, 
+                    model: demucs.apply.BagOfModels,
+                    device: str="cuda") -> tuple[np.ndarray, np.ndarray, int]:
     """
     separate vocals from instrumental in music. 
 
@@ -33,10 +40,10 @@ def separate_vocals(audio_path: str, model: demucs.apply.BagOfModels) -> tuple[n
     wav /= ref.std()
     sources = demucs.apply.apply_model(model=model, 
                                         mix=wav[None],
-                                        device="cpu",
+                                        device=device,
                                         split=True, 
                                         segment=None,
-                                        progress=True)[0]
+                                        progress=False)[0]
     sources *= ref.std()
     sources += ref.mean()
 
@@ -49,3 +56,29 @@ def separate_vocals(audio_path: str, model: demucs.apply.BagOfModels) -> tuple[n
             background += sources[n].numpy().T
 
     return voice, background, model.samplerate
+
+def main():
+    # path = "audio-training-data/grimes-music-ingest-tracks/.song_ids"
+    # tracks = pd.read_csv(path, sep='\t')
+    # pprint.pprint(tracks)
+
+    model = demucs.pretrained.get_model("htdemucs")
+
+    voice_dir = os.path.join("audio-training-data", "grimesai0", "voice")
+    instrumental_dir = os.path.join("audio-training-data", "grimesai0", "instrumental")
+    for dir in [voice_dir, instrumental_dir]:
+        if not os.path.exists(dir):
+            os.mkdir(dir)
+
+    files = glob.glob(os.path.join("audio-training-data", "grimesai0", "raw", "*.mp3"))
+    num_files = len(files)
+    files = files[:10]
+    for n, filepath in enumerate(files):
+        name = os.path.basename(filepath)
+        voice_audio, instrumental_audio, sample_rate = separate_vocals(filepath, model)
+        sf.write(os.path.join(voice_dir, name), voice_audio, sample_rate)
+        sf.write(os.path.join(instrumental_dir, name), instrumental_audio, sample_rate)
+        print(f"{n+1}/{num_files}: {name}")
+
+if __name__ == "__main__":
+    main()
