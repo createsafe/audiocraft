@@ -1,6 +1,8 @@
 import os
 import pprint
 import glob
+from multiprocessing import Pool
+from functools import partial
 
 import pandas as pd
 import numpy as np
@@ -57,6 +59,13 @@ def separate_vocals(audio_path: str,
 
     return voice, background, model.samplerate
 
+def preprocess_and_save(filepath, model, voice_dir, instrumental_dir):
+    name = os.path.basename(filepath)
+    voice_audio, instrumental_audio, sample_rate = separate_vocals(filepath, model)
+    sf.write(os.path.join(voice_dir, name), voice_audio, sample_rate)
+    sf.write(os.path.join(instrumental_dir, name), instrumental_audio, sample_rate)
+    print(f"{name}")
+
 def main():
     # path = "audio-training-data/grimes-music-ingest-tracks/.song_ids"
     # tracks = pd.read_csv(path, sep='\t')
@@ -73,12 +82,10 @@ def main():
     files = glob.glob(os.path.join("audio-training-data", "grimesai0", "raw", "*.mp3"))
     num_files = len(files)
     files = files[:10]
-    for n, filepath in enumerate(files):
-        name = os.path.basename(filepath)
-        voice_audio, instrumental_audio, sample_rate = separate_vocals(filepath, model)
-        sf.write(os.path.join(voice_dir, name), voice_audio, sample_rate)
-        sf.write(os.path.join(instrumental_dir, name), instrumental_audio, sample_rate)
-        print(f"{n+1}/{num_files}: {name}")
+
+    with Pool(4) as pool:
+        pool.map(partial(preprocess_and_save, model=model, voice_dir=voice_dir, instrumental_dir=instrumental_dir), files)
+    
 
 if __name__ == "__main__":
     main()
