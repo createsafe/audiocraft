@@ -505,6 +505,25 @@ class WaveformConditioner(BaseConditioner):
             mask = torch.ones_like(embeds[..., 0])
         embeds = (embeds * mask.unsqueeze(-1))
         return embeds, mask
+    
+class BeatConditioner(WaveformConditioner):
+    """Downbeat/upbeat conditioner.
+    TODO: Beat data extracted from audio using BeatNet.
+    """
+    def __init__(self, 
+                 output_dim: int,
+                 num_classes: int,
+                 hop_size: int,
+                 device: tp.Union[torch.device, str]='cpu'):
+        super().__init__(dim=num_classes, output_dim=output_dim, device=device)
+        self.hop_size = hop_size
+
+    def _get_wav_embedding(self, x: WavCondition) -> torch.Tensor:
+        return torch.zeros([1, self.dim])
+    
+    def _downsampling_factor(self):
+        return self.hop_size
+
 
 
 class ChromaStemConditioner(WaveformConditioner):

@@ -23,6 +23,8 @@ conditioners:
   self_wav:
     model: beat
     beat:
+      num_classes: 3
+      hop_size: 1024
       arg0: null
       arg1: "hello"
   description:

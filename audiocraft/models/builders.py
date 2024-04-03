@@ -33,6 +33,7 @@ from ..modules.conditioners import (
     ConditioningProvider,
     LUTConditioner,
     T5Conditioner,
+    BeatConditioner
 )
 from .unet import DiffusionUnet
 from .. import quantization as qt
@@ -149,6 +150,13 @@ def get_conditioner_provider(output_dim: int, cfg: omegaconf.DictConfig) -> Cond
         elif model_type == 'clap':
             conditioners[str(cond)] = CLAPEmbeddingConditioner(
                 output_dim=output_dim,
+                device=device,
+                **model_args
+            )
+        elif model_type == 'beat':
+            conditioners[str(cond)] = BeatConditioner(
+                output_dim=output_dim,
+                duration=duration,
                 device=device,
                 **model_args
             )
