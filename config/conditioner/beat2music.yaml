@@ -22,15 +22,9 @@ fuser:
 conditioners:
   self_wav:
     model: beat
-    chroma_stem:
-      sample_rate: ${sample_rate}
-      n_chroma: 12
-      radix2_exp: 14
-      argmax: true
-      match_len_on_eval: false
-      eval_wavs: null
-      n_eval_wavs: 100
-      cache_path: null
+    beat:
+      arg0: null
+      arg1: "hello"
   description:
     model: t5
     t5:
