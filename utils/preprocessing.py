@@ -67,6 +67,8 @@ def preprocess_and_save(filepath, model, voice_dir, instrumental_dir):
     print(f"{name}")
 
 def main():
+    # TODO: add CLI with path=path/to/audio 
+
     # path = "audio-training-data/grimes-music-ingest-tracks/.song_ids"
     # tracks = pd.read_csv(path, sep='\t')
     # pprint.pprint(tracks)
