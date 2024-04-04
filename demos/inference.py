@@ -27,7 +27,8 @@ p.add_argument("-p", "--prompt",
                help="text prompt condition")
 p.add_argument("-o", "--output",
                type=str,
-               help="output file or directory name")
+               help="output file or directory name",
+               default="output")
 args = p.parse_args()
 
 # setup model
@@ -55,8 +56,13 @@ output = model.generate(
     progress=True, return_tokens=True
 )
 
-output_name = args.output
-if not output_name:
-    output_name = f"{args.prompt}.wav"
+output_path = None
+# if os.path.isdir(args.output):
+#     if not os.path.exists(args.output):
+#         os.mkdir(args.output)
+#     output_path = os.path.join(args.output, f"{args.prompt}.wav")
 
-sf.write(output_name, output[0].squeeze().cpu().numpy(), samplerate=model.sample_rate)
+if not output_path:
+    output_path = f"{args.prompt}.wav"
+
+sf.write(output_path, output[0].squeeze().cpu().numpy(), samplerate=model.sample_rate)
