@@ -31,7 +31,7 @@ class BeatExtractor(nn.Module):
         self.estimator = BeatNet(1, mode='offline', inference_model='DBN', plot=[], thread=False)
 
     def forward(self, wav: torch.Tensor):
-        beats = estimator.offline_process(wav, self.sample_rate)
+        beats = self.estimator.offline_process(wav.numpy(), self.sample_rate)
         beat_times = beats[:, 0]
         beat_positions = beats[:, 1]
         
@@ -40,8 +40,8 @@ class BeatExtractor(nn.Module):
         frames = np.zeros_like(hop_times)
 
         # find frames that contain beats
-        for n in len(hop_times):
-            if any([t >= hop_times[n] and t < hop_times[n+1] for t in beats['times']]):
+        for n in range(len(hop_times[:-1])):
+            if any([t >= hop_times[n] and t < hop_times[n+1] for t in beat_times]):
                 frames[n] = 1
 
         frames_with_beats = np.where(frames)[0]
@@ -52,37 +52,15 @@ class BeatExtractor(nn.Module):
 
         return torch.from_numpy(frames)
 
+if __name__ == "__main__":
+    file = "path/to/audio.wav"
+    audio, sample_rate = librosa.load(file, mono=True)
+    extractor = BeatExtractor(sample_rate=sample_rate, hop_size=512)
+    frames = extractor.forward(torch.from_numpy(audio))
+    hop_times = np.linspace(0, len(audio)/sample_rate, len(frames))
 
-estimator = BeatNet(1, mode='offline', inference_model='DBN', plot=[], thread=False)
-
-# file = "path/to/audio.wav"
-file = "/Users/julianvanasse/Development/datasets/testdrums/120bpm.wav"
-audio, sample_rate = librosa.load(file, mono=True)
-beats = estimator.offline_process(audio=audio, sample_rate=sample_rate)
-beats = {
-    "times": beats[:, 0],
-    "pos": beats[:, 1]
-}
-
-duration = len(audio)/sample_rate
-
-hop_size = 512
-hop_times = np.arange(start=0, stop=duration, step=hop_size/sample_rate)
-frames = np.zeros_like(hop_times)
-
-for n, _ in enumerate(hop_times[:-1]):
-    if any([t >= hop_times[n] and t < hop_times[n+1] for t in beats['times']]):
-        frames[n] = 1
-
-frames_with_beats = np.where(frames)[0]
-for n, _ in enumerate(frames_with_beats[:-1]):
-    start = frames_with_beats[n]+1
-    end = frames_with_beats[n+1]
-    frames[start:end] = np.linspace(0, 1, end-start, False)
-
-
-t = np.linspace(0, len(audio)/sample_rate, len(audio), False)
-plt.plot(t, audio)
-# plt.vlines(x=beats['times'], ymin=-1, ymax=1, colors='r')
-plt.plot(hop_times, frames)
-plt.show()
+    t = np.linspace(0, len(audio)/sample_rate, len(audio), False)
+    plt.plot(t, audio)
+    # plt.vlines(x=beats['times'], ymin=-1, ymax=1, colors='r')
+    plt.plot(hop_times, frames)
+    plt.show()
