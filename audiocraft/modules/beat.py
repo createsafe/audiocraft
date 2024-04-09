@@ -37,18 +37,21 @@ class BeatExtractor(nn.Module):
         
         duration = len(wav)/self.sample_rate
         hop_times = np.linspace(0, duration, len(wav))
-        frames = np.zeros_like(hop_times)
+        num_hops = len(hop_times)
+        frames = np.zeros((2, num_hops))
 
         # find frames that contain beats
         for n in range(len(hop_times[:-1])):
             if any([t >= hop_times[n] and t < hop_times[n+1] for t in beat_times]):
-                frames[n] = 1
+                frames[0, n] = 1
+                if beat_positions[n] == 1:
+                    frames[1, n] = 1
 
         frames_with_beats = np.where(frames)[0]
         for n, _ in enumerate(frames_with_beats[:-1]):
             start = frames_with_beats[n]+1
             end = frames_with_beats[n+1]
-            frames[start:end] = np.linspace(0, 1, end-start, False)
+            frames[0, start:end] = np.linspace(0, 1, end-start, False)
 
         return torch.from_numpy(frames)
 

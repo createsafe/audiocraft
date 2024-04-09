@@ -25,6 +25,7 @@ from torch import nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
 
+from .beat import BeatExtractor
 from .chroma import ChromaExtractor
 from .streaming import StreamingModule
 from .transformer import create_sin_embedding
@@ -513,13 +514,17 @@ class BeatConditioner(WaveformConditioner):
     def __init__(self, 
                  output_dim: int,
                  num_classes: int,
+                 sample_rate: int,
                  hop_size: int,
-                 device: tp.Union[torch.device, str]='cpu'):
+                 device: tp.Union[torch.device, str]='cpu',
+                 **kwargs):
         super().__init__(dim=num_classes, output_dim=output_dim, device=device)
         self.hop_size = hop_size
+        self.sample_rate = sample_rate
+        self.beat_estimator = BeatExtractor(self.sample_rate, self.hop_size)
 
     def _get_wav_embedding(self, x: WavCondition) -> torch.Tensor:
-        return torch.zeros([1, self.dim])
+        return self.beat_estimator.forward(x.wav)
     
     def _downsampling_factor(self):
         return self.hop_size

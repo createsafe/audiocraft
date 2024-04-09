@@ -1,0 +1,3 @@
+[submodule "BeatNet"]
+	path = BeatNet
+	url = https://github.com/yocontra/BeatNet
