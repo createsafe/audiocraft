@@ -33,7 +33,6 @@ from ..modules.conditioners import (
     LUTConditioner,
     T5Conditioner,
 )
-from .unet import DiffusionUnet
 from .. import quantization as qt
 from ..utils.utils import dict_from_config
 
@@ -224,15 +223,6 @@ def get_debug_compression_model(device='cpu', sample_rate: int = 32000):
                                      sample_rate=sample_rate,
                                      channels=1).to(device)
     return compression_model.eval()
-
-
-def get_diffusion_model(cfg: omegaconf.DictConfig):
-    # TODO Find a way to infer the channels from dset
-    channels = cfg.channels
-    num_steps = cfg.schedule.num_steps
-    return DiffusionUnet(chin=channels,
-                         num_steps=num_steps,
-                         **cfg.diffusion_unet)
 
 
 def get_debug_lm_model(device='cpu'):
