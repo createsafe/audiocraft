@@ -23,10 +23,9 @@ conditioners:
   self_wav:
     model: beat
     beat:
-      num_classes: 3
+      num_classes: 2
       hop_size: 1024
-      arg0: null
-      arg1: "hello"
+      sample_rate: ${sample_rate}
   description:
     model: t5
     t5:
