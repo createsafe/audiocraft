@@ -3,6 +3,7 @@ import numpy as np
 import torch 
 from torch import nn
 
+from scipy.signal import square
 import librosa
 from BeatNet.BeatNet import BeatNet
 
@@ -33,7 +34,7 @@ class BeatExtractor(nn.Module):
 
     def forward(self, wav: torch.Tensor):
         T = wav.shape[-1]
-        print(T)
+
         if T < 4096:
             frames = np.zeros((1, 2))
         else:
@@ -44,7 +45,7 @@ class BeatExtractor(nn.Module):
             beat_positions = beats[:, 1]
             
             duration = len(wav)/self.sample_rate
-            hop_times = np.linspace(0, duration, len(wav))
+            hop_times = np.arange(0, duration, step=self.hop_size/self.sample_rate)
             num_hops = len(hop_times)
             frames = np.zeros((2, num_hops))
 
@@ -52,29 +53,56 @@ class BeatExtractor(nn.Module):
             for n in range(len(hop_times[:-1])):
                 if any([t >= hop_times[n] and t < hop_times[n+1] for t in beat_times]):
                     frames[0, n] = 1
-                    if beat_positions[n] == 1:
-                        frames[1, n] = 1
+                # find if frame contains downbeat
+                if any([t >= hop_times[n] and t < hop_times[n+1] and p == 1 for t, p in zip(beat_times, beat_positions)]):
+                    frames[1, n] = 1
+            
 
-            frames_with_beats = np.where(frames)[0]
+            frames_with_beats = np.where(frames[0, :])[0]
             for n, _ in enumerate(frames_with_beats[:-1]):
                 start = frames_with_beats[n]+1
                 end = frames_with_beats[n+1]
                 frames[0, start:end] = np.linspace(0, 1, end-start, False)
+
+            frames_with_downbeats = np.where(frames[1, :])[0]
+            for n, _ in enumerate(frames_with_downbeats[:-1]):
+                start = frames_with_downbeats[n]+1
+                end = frames_with_downbeats[n+1]
+                frames[1, start:end] = np.linspace(0, 1, end-start, False)
             frames = frames.T
 
         frames = torch.from_numpy(frames)
         
         return frames
 
-if __name__ == "__main__":
-    file = "path/to/audio.wav"
+def main():
+    file = "audio/80bpm.wav"
     audio, sample_rate = librosa.load(file, mono=True)
     extractor = BeatExtractor(sample_rate=sample_rate, hop_size=512)
     frames = extractor.forward(torch.from_numpy(audio))
     hop_times = np.linspace(0, len(audio)/sample_rate, len(frames))
 
     t = np.linspace(0, len(audio)/sample_rate, len(audio), False)
-    plt.plot(t, audio)
+    beat_idxs = np.where(frames[:, 0] == 1)
+    downbeat_idxs = np.where(frames[:, 1] == 1)
+    # plt.plot(t, audio)
     # plt.vlines(x=beats['times'], ymin=-1, ymax=1, colors='r')
-    plt.plot(hop_times, frames)
-    plt.show()
+    fig, axs = plt.subplots(4, 1, sharex=True, tight_layout=True)
+    
+    axs[0].plot(t, audio)
+    axs[1].vlines(hop_times[beat_idxs], ymin=-1, ymax=1)
+    axs[2].plot(hop_times, frames[:, 0])
+    axs[3].plot(hop_times, frames[:, 1])
+    plt.xlim((20, 40))
+    plt.savefig(fname="img.png", dpi=300)
+
+if __name__ == "__main__":
+    sample_rate = 8000
+    dur = 1
+    t = np.linspace(0, dur, int(dur*sample_rate), False)
+    # make square wave
+    x = square(t, duty=0.5)
+
+    # bias to between [0, 1]
+
+    # integrate and multiply by itself
