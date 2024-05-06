@@ -2,10 +2,67 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch 
 from torch import nn
+import torchaudio
 
-from scipy.signal import square
+from scipy.integrate import cumulative_trapezoid
+from scipy.signal import square, butter, lfilter, freqz
 import librosa
 from BeatNet.BeatNet import BeatNet
+
+def t_linspace(start: float, stop: float, size: int, endpoint: bool=False) -> torch.Tensor:
+    """
+    Torch linspace that behaves more like numpy.linspace
+    """
+    if not endpoint:
+        step = (stop - start) / size
+        stop -= step
+    return torch.linspace(start=start, end=stop, steps=size)
+
+def impulse2sawtooth(signal: torch.Tensor) -> torch.Tensor:
+    """
+    Generate sawtooth from impulse train.
+
+    Note, sawtooth is aliased.
+    """
+    i = torch.where(signal==1)[0]
+    result = torch.zeros_like(signal)
+    result[i] = 1.0
+
+    for n in range(len(i)-1):
+        start = i[n]+1
+        end = i[n+1]
+        result[start:end] = t_linspace(0, 1, end-start, False)
+
+    return result
+
+def beats2sawtooth(wav, sample_rate, hop_size, beat_times, beat_positions):
+    BEAT = 0
+    DOWNBEAT = 1
+    NUM_BEAT_CLASSES = 2
+
+    num_samples = wav.shape[1]
+    duration = num_samples/sample_rate
+    hop_times = torch.arange(0, duration, step=hop_size/sample_rate)
+    num_frames = len(hop_times)
+    frames = torch.zeros(size=(NUM_BEAT_CLASSES, num_frames))
+
+    beat_frames = list()
+    downbeat_frames = list()
+
+    for n in range(len(hop_times[:-1])):
+        # find frames in which beats fall
+        if any([t >= hop_times[n] and t < hop_times[n+1] for t in beat_times]):
+            frames[BEAT, n] = 1
+            beat_frames.append(n)
+        # find frames in which downbeats fall
+        if any([t >= hop_times[n] and t < hop_times[n+1] and p == 1 for t, p in zip(beat_times, beat_positions)]):
+            frames[DOWNBEAT, n] = 1
+            downbeat_frames.append(n)
+
+    for n in range(NUM_BEAT_CLASSES):
+        frames[n, :] = impulse2sawtooth(frames[n, :])
+
+    return frames
 
 class BeatExtractor(nn.Module):
     """Beat extraction and time ramp generation.
@@ -38,40 +95,15 @@ class BeatExtractor(nn.Module):
         if T < 4096:
             frames = np.zeros((1, 2))
         else:
-            signal = wav.cpu().numpy()
-            signal = np.squeeze(signal)
-            beats = self.estimator.offline_process(signal, self.sample_rate)
+            beats = self.estimator.offline_process(wav, self.sample_rate)
             beat_times = beats[:, 0]
             beat_positions = beats[:, 1]
             
-            duration = len(wav)/self.sample_rate
-            hop_times = np.arange(0, duration, step=self.hop_size/self.sample_rate)
-            num_hops = len(hop_times)
-            frames = np.zeros((2, num_hops))
-
-            # find frames that contain beats
-            for n in range(len(hop_times[:-1])):
-                if any([t >= hop_times[n] and t < hop_times[n+1] for t in beat_times]):
-                    frames[0, n] = 1
-                # find if frame contains downbeat
-                if any([t >= hop_times[n] and t < hop_times[n+1] and p == 1 for t, p in zip(beat_times, beat_positions)]):
-                    frames[1, n] = 1
-            
-
-            frames_with_beats = np.where(frames[0, :])[0]
-            for n, _ in enumerate(frames_with_beats[:-1]):
-                start = frames_with_beats[n]+1
-                end = frames_with_beats[n+1]
-                frames[0, start:end] = np.linspace(0, 1, end-start, False)
-
-            frames_with_downbeats = np.where(frames[1, :])[0]
-            for n, _ in enumerate(frames_with_downbeats[:-1]):
-                start = frames_with_downbeats[n]+1
-                end = frames_with_downbeats[n+1]
-                frames[1, start:end] = np.linspace(0, 1, end-start, False)
-            frames = frames.T
-
-        frames = torch.from_numpy(frames)
+            frames = beats2sawtooth(wav, 
+                                    sample_rate=self.sample_rate, 
+                                    hop_size=self.hop_size,
+                                    beat_times=beat_times,
+                                    beat_positions=beat_positions)
         
         return frames
 
@@ -97,12 +129,4 @@ def main():
     plt.savefig(fname="img.png", dpi=300)
 
 if __name__ == "__main__":
-    sample_rate = 8000
-    dur = 1
-    t = np.linspace(0, dur, int(dur*sample_rate), False)
-    # make square wave
-    x = square(t, duty=0.5)
-
-    # bias to between [0, 1]
-
-    # integrate and multiply by itself
+    main()
