@@ -4,8 +4,6 @@ import torch
 from torch import nn
 import torchaudio
 
-from scipy.integrate import cumulative_trapezoid
-from scipy.signal import square, butter, lfilter, freqz
 import librosa
 from BeatNet.BeatNet import BeatNet
 
@@ -40,7 +38,7 @@ def beats2sawtooth(wav, sample_rate, hop_size, beat_times, beat_positions):
     DOWNBEAT = 1
     NUM_BEAT_CLASSES = 2
 
-    num_samples = wav.shape[1]
+    num_samples = wav.shape[-1]
     duration = num_samples/sample_rate
     hop_times = torch.arange(0, duration, step=hop_size/sample_rate)
     num_frames = len(hop_times)
@@ -95,7 +93,7 @@ class BeatExtractor(nn.Module):
         if T < 4096:
             frames = torch.zeros((2, 1))
         else:
-            beats = self.estimator.offline_process(wav, self.sample_rate)
+            beats = self.estimator.process_offline(wav, self.sample_rate)
             beat_times = beats[:, 0]
             beat_positions = beats[:, 1]
             
@@ -108,25 +106,31 @@ class BeatExtractor(nn.Module):
         return frames
 
 def main():
+    import os 
+
     file = "audio/80bpm.wav"
     audio, sample_rate = librosa.load(file, mono=True)
     extractor = BeatExtractor(sample_rate=sample_rate, hop_size=512)
-    frames = extractor.forward(torch.from_numpy(audio))
-    hop_times = np.linspace(0, len(audio)/sample_rate, len(frames))
+    frames = extractor.forward(audio)
+    hop_times = np.linspace(0, len(audio)/sample_rate, frames.shape[-1])
 
     t = np.linspace(0, len(audio)/sample_rate, len(audio), False)
-    beat_idxs = np.where(frames[:, 0] == 1)
-    downbeat_idxs = np.where(frames[:, 1] == 1)
-    # plt.plot(t, audio)
-    # plt.vlines(x=beats['times'], ymin=-1, ymax=1, colors='r')
+    beat_idxs = np.where(frames[0, :] == 1)
+    downbeat_idxs = np.where(frames[1, :] == 1)
+
+    # plot 
     fig, axs = plt.subplots(4, 1, sharex=True, tight_layout=True)
-    
     axs[0].plot(t, audio)
+    axs[0].set_title(f"audio from {file}")
     axs[1].vlines(hop_times[beat_idxs], ymin=-1, ymax=1)
-    axs[2].plot(hop_times, frames[:, 0])
-    axs[3].plot(hop_times, frames[:, 1])
+    axs[1].set_title("beats found")
+    axs[2].plot(hop_times, frames[0, :])
+    axs[2].set_title("condition dim 1")
+    axs[3].plot(hop_times, frames[1, :])
+    axs[3].set_title("condition dim 2")
+    axs[3].set_xlabel("frame")
     plt.xlim((20, 40))
-    plt.savefig(fname="img.png", dpi=300)
+    plt.savefig(fname=f"{os.path.basename(file)}.png", dpi=300)
 
 if __name__ == "__main__":
     main()
