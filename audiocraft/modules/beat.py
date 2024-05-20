@@ -93,7 +93,7 @@ class BeatExtractor(nn.Module):
         if T < 4096:
             frames = torch.zeros((2, 1))
         else:
-            beats = self.estimator.process_offline(wav, self.sample_rate)
+            beats = self.estimator.process_offline(wav.detach().numpy(), self.sample_rate)
             beat_times = beats[:, 0]
             beat_positions = beats[:, 1]
             
@@ -102,7 +102,7 @@ class BeatExtractor(nn.Module):
                                     hop_size=self.hop_size,
                                     beat_times=beat_times,
                                     beat_positions=beat_positions)
-        
+
         return frames
 
 def main():
