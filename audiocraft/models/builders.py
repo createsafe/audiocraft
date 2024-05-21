@@ -33,7 +33,8 @@ from ..modules.conditioners import (
     ConditioningProvider,
     LUTConditioner,
     T5Conditioner,
-    BeatConditioner
+    BeatConditioner,
+    ChromaChordConditioner
 )
 from .unet import DiffusionUnet
 from .. import quantization as qt
