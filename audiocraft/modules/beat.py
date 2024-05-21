@@ -91,9 +91,11 @@ class BeatExtractor(nn.Module):
 
     def forward(self, wav: torch.Tensor):
         T = wav.shape[-1]
+        num_frames = int(np.ceil(T / self.hop_size))
+        beat_feature = torch.zeros(size=(1, num_frames, 2))
 
         if T < 4096:
-            frames = torch.zeros((1, 2))
+            pass
         else:
             beats = self.estimator.get_beats(audio=wav, sample_rate=self.sample_rate)
             # beats = self.estimator.process_offline(wav.cpu().numpy().T, self.sample_rate)
@@ -104,10 +106,11 @@ class BeatExtractor(nn.Module):
                                     sample_rate=self.sample_rate, 
                                     hop_size=self.hop_size,
                                     beat_times=beat_times,
-                                    beat_positions=beat_positions)
-            frames = frames.T
+                                    beat_positions=beat_positions).T
+            
+            beat_feature = frames.unsqueeze(0)
 
-        return frames
+        return beat_feature
 
 def main():
     import os 

@@ -157,6 +157,7 @@ def get_conditioner_provider(output_dim: int, cfg: omegaconf.DictConfig) -> Cond
             conditioners[str(cond)] = BeatConditioner(
                 output_dim=output_dim,
                 device=device,
+                duration=duration,
                 **model_args
             )
         else:
