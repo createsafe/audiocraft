@@ -147,6 +147,13 @@ def get_conditioner_provider(output_dim: int, cfg: omegaconf.DictConfig) -> Cond
                 device=device,
                 **model_args
             )
+        elif model_type == 'chroma_chord':
+            conditioners[str(cond)] = ChromaChordConditioner(
+                output_dim=output_dim,
+                duration=duration,
+                device=device,
+                **model_args
+            )
         elif model_type == 'clap':
             conditioners[str(cond)] = CLAPEmbeddingConditioner(
                 output_dim=output_dim,
