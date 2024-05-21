@@ -529,6 +529,9 @@ class BeatConditioner(WaveformConditioner):
                                         extract_embed_fn=self._extract_beatramp_chunk)
 
     def _get_wav_embedding(self, x: WavCondition) -> torch.Tensor:
+        # x.wav will be [B, C, T] in shape
+        # return a tensor that is [B, N, F], where B is batch, N is frames (subsamples) and 
+        #                                    F is the number of features (output_dim) 
         return self.beat_estimator.forward(x.wav)
     
     def _downsampling_factor(self):
