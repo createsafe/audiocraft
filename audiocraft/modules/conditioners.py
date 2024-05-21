@@ -522,7 +522,7 @@ class BeatConditioner(WaveformConditioner):
         super().__init__(dim=num_classes, output_dim=output_dim, device=device)
         self.hop_size = hop_size
         self.sample_rate = sample_rate
-        self.beat_estimator = BeatExtractor(self.sample_rate, self.hop_size)
+        self.beat_estimator = BeatExtractor(self.sample_rate, self.hop_size, device=device)
         if cache_path is not None:
             self.cache = EmbeddingCache(Path(cache_path) / 'wav', self.device,
                                         compute_embed_fn=self._get_wav_embedding,

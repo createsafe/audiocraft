@@ -81,19 +81,22 @@ class BeatExtractor(nn.Module):
     """
     def __init__(self,
                  sample_rate: int,
-                 hop_size: int = 512):
+                 hop_size: int = 512, 
+                 device = "cpu"):
         super().__init__()
         self.sample_rate = sample_rate
         self.hop_size = hop_size
-        self.estimator = BeatNet(1, mode='offline', inference_model='DBN', plot=[], thread=False)
+        self.device = device
+        self.estimator = BeatNet(1, mode='offline', inference_model='DBN', plot=[], thread=False, device=device)
 
     def forward(self, wav: torch.Tensor):
         T = wav.shape[-1]
 
         if T < 4096:
-            frames = torch.zeros((2, 1))
+            frames = torch.zeros((1, 2))
         else:
-            beats = self.estimator.process_offline(wav.detach().numpy(), self.sample_rate)
+            beats = self.estimator.get_beats(audio=wav, sample_rate=self.sample_rate)
+            # beats = self.estimator.process_offline(wav.cpu().numpy().T, self.sample_rate)
             beat_times = beats[:, 0]
             beat_positions = beats[:, 1]
             
@@ -102,6 +105,7 @@ class BeatExtractor(nn.Module):
                                     hop_size=self.hop_size,
                                     beat_times=beat_times,
                                     beat_positions=beat_positions)
+            frames = frames.T
 
         return frames
 
@@ -110,11 +114,14 @@ def main():
 
     file = "audio/80bpm.wav"
     audio, sample_rate = librosa.load(file, mono=True)
+    audio = torch.Tensor(audio)
     extractor = BeatExtractor(sample_rate=sample_rate, hop_size=512)
-    frames = extractor.forward(audio)
-    hop_times = np.linspace(0, len(audio)/sample_rate, frames.shape[-1])
+    frames = extractor.forward(audio.unsqueeze(0).unsqueeze(0), sample_rate)
 
-    t = np.linspace(0, len(audio)/sample_rate, len(audio), False)
+    dur = audio.shape[-1]/sample_rate
+    hop_times = np.linspace(0, dur, frames.shape[-1])
+
+    t = np.linspace(0, dur, len(audio), False)
     beat_idxs = np.where(frames[0, :] == 1)
     downbeat_idxs = np.where(frames[1, :] == 1)
 
