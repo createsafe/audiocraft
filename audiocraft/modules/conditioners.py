@@ -507,52 +507,7 @@ class WaveformConditioner(BaseConditioner):
         embeds = (embeds * mask.unsqueeze(-1))
         return embeds, mask
     
-# class BeatConditioner(WaveformConditioner):
-#     """Downbeat/upbeat conditioner.
-
-#     """
-#     def __init__(self, 
-#                  output_dim: int,
-#                  num_classes: int,
-#                  sample_rate: int,
-#                  hop_size: int,
-#                  device: tp.Union[torch.device, str]='cpu',
-#                  cache_path: tp.Optional[tp.Union[str, Path]]=None,
-#                  **kwargs):
-#         super().__init__(dim=num_classes, output_dim=output_dim, device=device)
-#         self.hop_size = hop_size
-#         self.sample_rate = sample_rate
-#         self.beat_estimator = BeatExtractor(self.sample_rate, self.hop_size, device=device)
-#         if cache_path is not None:
-#             self.cache = EmbeddingCache(Path(cache_path) / 'wav', self.device,
-#                                         compute_embed_fn=self._get_wav_embedding,
-#                                         extract_embed_fn=self._extract_beatramp_chunk)
-
-#     def _get_wav_embedding(self, x: WavCondition) -> torch.Tensor:
-#         # x.wav will be [B, C, T] in shape
-#         # return a tensor that is [B, N, F], where B is batch, N is frames (subsamples) and 
-#         #                                    F is the number of features (output_dim) 
-#         return self.beat_estimator.forward(x.wav)
     
-#     def _downsampling_factor(self):
-#         return self.hop_size
-    
-#     def _extract_beatramp_chunk(self, beatramp: torch.Tensor, x: WavCondition, idx: int) -> torch.Tensor:
-#         """Extract a chunk of beatramp from the full beatramp derived from the full waveform."""
-#         wav_length = x.wav.shape[-1]
-#         seek_time = x.seek_time[idx]
-#         assert seek_time is not None, (
-#             "WavCondition seek_time is required "
-#             "when extracting beatramp chunks from pre-computed beatramp.")
-#         beatramp = beatramp.float()
-#         frame_rate = self.sample_rate / self._downsampling_factor()
-#         target_length = int(frame_rate * wav_length / self.sample_rate)
-#         index = int(frame_rate * seek_time)
-#         out = beatramp[index: index + target_length]
-#         out = F.pad(out[None], (0, 0, 0, target_length - out.shape[0]))[0]
-#         return out.to(self.device)
-    
-
 class BeatConditioner(WaveformConditioner):
     """Beat conditioner based on beat and downbeat prediction
     
