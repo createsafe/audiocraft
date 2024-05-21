@@ -1,0 +1,28 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Current File with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": "${command:pickArgs}"
+        },
+        {
+            "name": "beat2music",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "dora",
+            "args": [
+                "run",
+                "-d",
+                "solver=musicgen/musicgen_base_32khz",
+                "model/lm/model_scale=small",
+                "conditioner=beat2music",
+                "dset=audio/data"
+            ],
+            "justMyCode": false
+        }
+    ]
+}

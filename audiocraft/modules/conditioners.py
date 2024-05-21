@@ -25,6 +25,7 @@ from torch import nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
 
+from .beat import BeatExtractor
 from .chroma import ChromaExtractor
 from .streaming import StreamingModule
 from .transformer import create_sin_embedding
@@ -505,6 +506,168 @@ class WaveformConditioner(BaseConditioner):
             mask = torch.ones_like(embeds[..., 0])
         embeds = (embeds * mask.unsqueeze(-1))
         return embeds, mask
+    
+    
+class BeatConditioner(WaveformConditioner):
+    """Beat conditioner based on beat and downbeat prediction
+    
+
+    """
+    def __init__(self, 
+                 output_dim: int, 
+                 sample_rate: int, 
+                 hop_size: int,
+                 num_classes: int, 
+                 duration: float, 
+                 match_len_on_eval: bool = True, 
+                 eval_wavs: tp.Optional[str] = None,
+                 n_eval_wavs: int = 0, 
+                 cache_path: tp.Optional[tp.Union[str, Path]] = None,
+                 device: tp.Union[torch.device, str] = 'cpu', 
+                 **kwargs):
+        
+        super().__init__(dim=num_classes, output_dim=output_dim, device=device)
+        self.hop_size = hop_size
+        self.sample_rate = sample_rate
+        self.autocast = TorchAutocast(enabled=device != 'cpu', device_type=self.device, dtype=torch.float32)
+        self.sample_rate = sample_rate
+        self.match_len_on_eval = match_len_on_eval
+
+        if match_len_on_eval:
+            self._use_masking = False 
+        self.duration = duration
+
+        self.beat_estimator = BeatExtractor(self.sample_rate, self.hop_size, device=device)
+        
+        self.feature_len = self._get_beat_feature_len()
+        self.eval_wavs: tp.Optional[torch.Tensor] = self._load_eval_wavs(eval_wavs, n_eval_wavs)
+        self.cache = None
+        if cache_path is not None:
+            self.cache = EmbeddingCache(Path(cache_path) / 'wav', self.device,
+                                        compute_embed_fn=self._get_full_chroma_for_cache,
+                                        extract_embed_fn=self._extract_chroma_chunk)
+
+    def _downsampling_factor(self) -> int:
+        return self.hop_size
+
+    def _load_eval_wavs(self, path: tp.Optional[str], num_samples: int) -> tp.Optional[torch.Tensor]:
+        """Load pre-defined waveforms from a json.
+        These waveforms will be used for chroma extraction during evaluation.
+        This is done to make the evaluation on MusicCaps fair (we shouldn't see the chromas of MusicCaps).
+        """
+        if path is None:
+            return None
+
+        logger.info(f"Loading evaluation wavs from {path}")
+        from audiocraft.data.audio_dataset import AudioDataset
+        dataset: AudioDataset = AudioDataset.from_meta(
+            path, segment_duration=self.duration, min_audio_duration=self.duration,
+            sample_rate=self.sample_rate, channels=1)
+
+        if len(dataset) > 0:
+            eval_wavs = dataset.collater([dataset[i] for i in range(num_samples)]).to(self.device)
+            logger.info(f"Using {len(eval_wavs)} evaluation wavs for chroma-stem conditioner")
+            return eval_wavs
+        else:
+            raise ValueError("Could not find evaluation wavs, check lengths of wavs")
+
+    def reset_eval_wavs(self, eval_wavs: tp.Optional[torch.Tensor]) -> None:
+        self.eval_wavs = eval_wavs
+
+    def has_eval_wavs(self) -> bool:
+        return self.eval_wavs is not None
+
+    def _sample_eval_wavs(self, num_samples: int) -> torch.Tensor:
+        """Sample wavs from a predefined list."""
+        assert self.eval_wavs is not None, "Cannot sample eval wavs as no eval wavs provided."
+        total_eval_wavs = len(self.eval_wavs)
+        out = self.eval_wavs
+        if num_samples > total_eval_wavs:
+            out = self.eval_wavs.repeat(num_samples // total_eval_wavs + 1, 1, 1)
+        return out[torch.randperm(len(out))][:num_samples]
+
+    def _get_beat_feature_len(self) -> int:
+        """Get length of beat during training."""
+        dummy_wav = torch.zeros((1, int(self.sample_rate * self.duration)), device=self.device)
+        dummy_chr = self.beat_estimator(dummy_wav)
+        return dummy_chr.shape[1]
+
+    @torch.no_grad()
+    def _compute_wav_embedding(self, wav: torch.Tensor, sample_rate: int) -> torch.Tensor:
+        """Compute wav embedding, applying stem and chroma extraction."""
+        # avoid 0-size tensors when we are working with null conds
+        if wav.shape[-1] == 1:
+            return self.beat_estimator(wav)
+        beat_ramps = self.beat_estimator(wav)
+        return beat_ramps
+
+    @torch.no_grad()
+    def _get_full_chroma_for_cache(self, path: tp.Union[str, Path], x: WavCondition, idx: int) -> torch.Tensor:
+        """Extract chroma from the whole audio waveform at the given path."""
+        wav, sr = audio_read(path)
+        wav = wav[None].to(self.device)
+        wav = convert_audio(wav, sr, self.sample_rate, to_channels=1)
+        chroma = self._compute_wav_embedding(wav, self.sample_rate)[0]
+        return chroma
+
+    def _extract_chroma_chunk(self, full_chroma: torch.Tensor, x: WavCondition, idx: int) -> torch.Tensor:
+        """Extract a chunk of chroma from the full chroma derived from the full waveform."""
+        wav_length = x.wav.shape[-1]
+        seek_time = x.seek_time[idx]
+        assert seek_time is not None, (
+            "WavCondition seek_time is required "
+            "when extracting chroma chunks from pre-computed chroma.")
+        full_chroma = full_chroma.float()
+        frame_rate = self.sample_rate / self._downsampling_factor()
+        target_length = int(frame_rate * wav_length / self.sample_rate)
+        index = int(frame_rate * seek_time)
+        out = full_chroma[index: index + target_length]
+        out = F.pad(out[None], (0, 0, 0, target_length - out.shape[0]))[0]
+        return out.to(self.device)
+
+    @torch.no_grad()
+    def _get_wav_embedding(self, x: WavCondition) -> torch.Tensor:
+        """Get the wav embedding from the WavCondition.
+        The conditioner will either extract the embedding on-the-fly computing it from the condition wav directly
+        or will rely on the embedding cache to load the pre-computed embedding if relevant.
+        """
+        sampled_wav: tp.Optional[torch.Tensor] = None
+        if not self.training and self.eval_wavs is not None:
+            warn_once(logger, "Using precomputed evaluation wavs!")
+            sampled_wav = self._sample_eval_wavs(len(x.wav))
+
+        no_undefined_paths = all(p is not None for p in x.path)
+        no_nullified_cond = x.wav.shape[-1] > 1
+        if sampled_wav is not None:
+            beat_features = self._compute_wav_embedding(sampled_wav, self.sample_rate)
+        elif self.cache is not None and no_undefined_paths and no_nullified_cond:
+            paths = [Path(p) for p in x.path if p is not None]
+            beat_features = self.cache.get_embed_from_cache(paths, x)
+        else:
+            assert all(sr == x.sample_rate[0] for sr in x.sample_rate), "All sample rates in batch should be equal."
+            beat_features = self._compute_wav_embedding(x.wav, x.sample_rate[0])
+
+        if self.match_len_on_eval:
+            B, T, C = beat_features.shape
+            if T > self.feature_len:
+                beat_features = beat_features[:, :self.feature_len]
+                logger.debug(f"beat_features was truncated to match length! ({T} -> {beat_features.shape[1]})")
+            elif T < self.feature_len:
+                n_repeat = int(math.ceil(self.feature_len / T))
+                beat_features = beat_features.repeat(1, n_repeat, 1)
+                beat_features = beat_features[:, :self.feature_len]
+                logger.debug(f"beat_features repeated to match length! ({T} -> {beat_features.shape[1]})")
+
+        return beat_features
+
+    def tokenize(self, x: WavCondition) -> WavCondition:
+        """Apply WavConditioner tokenization and populate cache if needed."""
+        x = super().tokenize(x)
+        no_undefined_paths = all(p is not None for p in x.path)
+        if self.cache is not None and no_undefined_paths:
+            paths = [Path(p) for p in x.path if p is not None]
+            self.cache.populate_embed_cache(paths, x)
+        return x
 
 
 class ChromaStemConditioner(WaveformConditioner):
@@ -539,7 +702,7 @@ class ChromaStemConditioner(WaveformConditioner):
         self.sample_rate = sample_rate
         self.match_len_on_eval = match_len_on_eval
         if match_len_on_eval:
-            self._use_masking = False
+            self._use_masking = False 
         self.duration = duration
         self.__dict__['demucs'] = pretrained.get_model('htdemucs').to(device)
         stem_sources: list = self.demucs.sources  # type: ignore
