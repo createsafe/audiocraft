@@ -34,7 +34,8 @@ from ..modules.conditioners import (
     LUTConditioner,
     T5Conditioner,
     BeatConditioner,
-    ChromaChordConditioner
+    ChromaChordConditioner,
+    BeatChromaChordConditioner
 )
 from .unet import DiffusionUnet
 from .. import quantization as qt
@@ -163,6 +164,13 @@ def get_conditioner_provider(output_dim: int, cfg: omegaconf.DictConfig) -> Cond
             )
         elif model_type == 'beat':
             conditioners[str(cond)] = BeatConditioner(
+                output_dim=output_dim,
+                device=device,
+                duration=duration,
+                **model_args
+            )
+        elif model_type == 'beat_chord':
+            conditioners[str(cond)] = BeatChromaChordConditioner(
                 output_dim=output_dim,
                 device=device,
                 duration=duration,
