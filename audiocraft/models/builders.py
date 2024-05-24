@@ -33,7 +33,9 @@ from ..modules.conditioners import (
     ConditioningProvider,
     LUTConditioner,
     T5Conditioner,
-    BeatConditioner
+    BeatConditioner,
+    ChromaChordConditioner,
+    BeatChromaChordConditioner
 )
 from .unet import DiffusionUnet
 from .. import quantization as qt
@@ -147,6 +149,13 @@ def get_conditioner_provider(output_dim: int, cfg: omegaconf.DictConfig) -> Cond
                 device=device,
                 **model_args
             )
+        elif model_type == 'chroma_chord':
+            conditioners[str(cond)] = ChromaChordConditioner(
+                output_dim=output_dim,
+                duration=duration,
+                device=device,
+                **model_args
+            )
         elif model_type == 'clap':
             conditioners[str(cond)] = CLAPEmbeddingConditioner(
                 output_dim=output_dim,
@@ -155,6 +164,13 @@ def get_conditioner_provider(output_dim: int, cfg: omegaconf.DictConfig) -> Cond
             )
         elif model_type == 'beat':
             conditioners[str(cond)] = BeatConditioner(
+                output_dim=output_dim,
+                device=device,
+                duration=duration,
+                **model_args
+            )
+        elif model_type == 'beat_chord':
+            conditioners[str(cond)] = BeatChromaChordConditioner(
                 output_dim=output_dim,
                 device=device,
                 duration=duration,
