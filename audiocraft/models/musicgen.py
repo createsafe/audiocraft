@@ -122,7 +122,7 @@ class MusicGen(BaseGenModel):
             'two_step_cfg': two_step_cfg,
         }
 
-    def generate_with_chroma(self, descriptions: tp.List[str], melody_wavs: MelodyType,
+    def generate_with_wav(self, descriptions: tp.List[str], melody_wavs: MelodyType,
                              melody_sample_rate: int, progress: bool = False,
                              return_tokens: bool = False) -> tp.Union[torch.Tensor,
                                                                       tp.Tuple[torch.Tensor, torch.Tensor]]:
@@ -153,7 +153,8 @@ class MusicGen(BaseGenModel):
                 if wav is not None else None
                 for wav in melody_wavs
             ]
-        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions=descriptions, prompt=None,
+        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions=descriptions, 
+                                                                        prompt=None,
                                                                         melody_wavs=melody_wavs)
         assert prompt_tokens is None
         tokens = self._generate_tokens(attributes, prompt_tokens, progress)
