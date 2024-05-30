@@ -149,9 +149,10 @@ class MusicGen(BaseGenModel):
                     assert melody.dim() == 2, "One melody in the list has the wrong number of dims."
 
         melody_wavs = [
-            convert_audio(wav, melody_sample_rate, self.sample_rate, self.audio_channels)
-            if wav is not None else None
-            for wav in melody_wavs]
+                convert_audio(wav, melody_sample_rate, self.sample_rate, self.audio_channels)
+                if wav is not None else None
+                for wav in melody_wavs
+            ]
         attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions=descriptions, prompt=None,
                                                                         melody_wavs=melody_wavs)
         assert prompt_tokens is None
