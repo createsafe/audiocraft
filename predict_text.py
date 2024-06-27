@@ -40,14 +40,17 @@ model = MusicGen(
 )
 model.set_generation_params(duration=30)
 
-# descriptions to condition generation
-descriptions = [
-    "jazz flute with drums"
-]
-
 # load some audio
 audio, sample_rate = torchaudio.load('short/dreams.mp3')
 audio = audio[:1, :]
+
+descriptions=["a test text prompt"]
+musical_symbols=[
+    {
+        'chords': "A:min E:min C:maj E:7",
+        'downbeats': [0.1, 0.9, 1.7, 2.5]
+    }
+]
 
 # generate
 print(f'starting generation: {datetime.now()}')
@@ -57,13 +60,10 @@ start = time.time()
 #                                   melody_sample_rate=sample_rate, 
 #                                   progress=True)
 wavs = model.generate_with_text_chroma(
-    descriptions=["a test text prompt"],
-    musical_symbols=[
-        {
-            'chords': "A:min E:min C:maj E:7",
-            'downbeats': [0.1, 0.9, 1.7, 2.5]
-        }
-    ]
+    descriptions=descriptions,
+    musical_symbols=musical_symbols,
+    bpm=120, 
+    meter=4
 )
 
 print(f'finished generation: {datetime.now()}')

@@ -156,7 +156,7 @@ def nullify_condition(condition: ConditionType, dim: int = 1):
     return out, mask
 
 
-def nullify_wav(cond: WavCondition) -> WavCondition:
+def nullify_wav(cond: tp.Union[WavCondition,WavChordTextCondition]) -> tp.Union[WavCondition,WavChordTextCondition]:
     """Transform a WavCondition to a nullified WavCondition.
     It replaces the wav by a null tensor, forces its length to 0, and replaces metadata by dummy attributes.
 
@@ -165,14 +165,25 @@ def nullify_wav(cond: WavCondition) -> WavCondition:
     Returns:
         WavCondition: Nullified wav condition.
     """
-    null_wav, _ = nullify_condition((cond.wav, torch.zeros_like(cond.wav)), dim=cond.wav.dim() - 1)
-    return WavCondition(
-        wav=null_wav,
-        length=torch.tensor([0] * cond.wav.shape[0], device=cond.wav.device),
-        sample_rate=cond.sample_rate,
-        path=[None] * cond.wav.shape[0],
-        seek_time=[None] * cond.wav.shape[0],
-    )
+    if not isinstance(cond, WavChordTextCondition):
+        null_wav, _ = nullify_condition((cond.wav, torch.zeros_like(cond.wav)), dim=cond.wav.dim() - 1)
+        return WavCondition(
+            wav=null_wav,
+            length=torch.tensor([0] * cond.wav.shape[0], device=cond.wav.device),
+            sample_rate=cond.sample_rate,
+            path=[None] * cond.wav.shape[0],
+            seek_time=[None] * cond.wav.shape[0],
+        )
+    else:
+        return WavChordTextCondition(
+            wav=['N']* len(cond.wav),
+            length=torch.tensor([0] * len(cond.wav), device=cond.length.device),
+            sample_rate=cond.sample_rate,
+            path=[None],
+            seek_time=[None],
+            bpm = cond.bpm,
+            meter = cond.meter
+        )
 
 
 def nullify_joint_embed(embed: JointEmbedCondition) -> JointEmbedCondition:
@@ -2045,7 +2056,7 @@ class ConditioningProvider(nn.Module):
                 out[condition].append(text[condition])
         return out
 
-    def _collate_wavs(self, samples: tp.List[ConditioningAttributes]) -> tp.Dict[str, WavCondition]:
+    def _collate_wavs(self, samples: tp.List[ConditioningAttributes]) -> tp.Dict[str, tp.Union[WavCondition, WavChordTextCondition]]:
         """Generate a dict where the keys are attributes by which we fetch similar wavs,
         and the values are Tensors of wavs according to said attributes.
 
@@ -2065,16 +2076,24 @@ class ConditioningProvider(nn.Module):
         sample_rates = defaultdict(list)
         paths = defaultdict(list)
         seek_times = defaultdict(list)
+        bpms = defaultdict(list)
+        meters = defaultdict(list)
         out: tp.Dict[str, WavCondition] = {}
 
         for sample in samples:
             for attribute in self.wav_conditions:
-                wav, length, sample_rate, path, seek_time = sample.wav[attribute]
-                assert wav.dim() == 3, f"Got wav with dim={wav.dim()}, but expected 3 [1, C, T]"
-                assert wav.size(0) == 1, f"Got wav [B, C, T] with shape={wav.shape}, but expected B == 1"
-                # mono-channel conditioning
-                wav = wav.mean(1, keepdim=True)  # [1, 1, T]
-                wavs[attribute].append(wav.flatten())  # [T]
+                if isinstance(sample.wav[attribute], WavCondition):
+                    wav, length, sample_rate, path, seek_time = sample.wav[attribute]
+                    assert wav.dim() == 3, f"Got wav with dim={wav.dim()}, but expected 3 [1, C, T]"
+                    assert wav.size(0) == 1, f"Got wav [B, C, T] with shape={wav.shape}, but expected B == 1"
+                    # mono-channel conditioning
+                    wav = wav.mean(1, keepdim=True)  # [1, 1, T]
+                    wavs[attribute].append(wav.flatten())  # [T]
+                else:
+                    wav, length, sample_rate, path, seek_time, bpm, meter = sample.wav[attribute]
+                    wavs[attribute].append(wav[0])
+                    bpms[attribute].append(bpm[0])
+                    meters[attribute].append(meter[0])
                 lengths[attribute].append(length)
                 sample_rates[attribute].extend(sample_rate)
                 paths[attribute].extend(path)
@@ -2082,11 +2101,15 @@ class ConditioningProvider(nn.Module):
 
         # stack all wavs to a single tensor
         for attribute in self.wav_conditions:
-            stacked_wav, _ = collate(wavs[attribute], dim=0)
-            out[attribute] = WavCondition(
-                stacked_wav.unsqueeze(1), torch.cat(lengths[attribute]), sample_rates[attribute],
-                paths[attribute], seek_times[attribute])
-
+            if isinstance(wavs[attribute][0], torch.Tensor):
+                stacked_wav, _ = collate(wavs[attribute], dim=0)
+                out[attribute] = WavCondition(
+                    stacked_wav.unsqueeze(1), torch.cat(lengths[attribute]), sample_rates[attribute],
+                    paths[attribute], seek_times[attribute])
+            else:
+                out[attribute] = WavChordTextCondition(
+                    wavs[attribute], torch.cat(lengths[attribute]), sample_rates[attribute],
+                    paths[attribute], seek_times[attribute], bpms[attribute], meters[attribute])
         return out
 
     def _collate_joint_embeds(self, samples: tp.List[ConditioningAttributes]) -> tp.Dict[str, JointEmbedCondition]:
