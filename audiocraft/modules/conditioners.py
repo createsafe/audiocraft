@@ -1230,7 +1230,7 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
         self.continuation_count = 0 
 
         self.chroma_indices = torch.arange(start=0, end=12, step=1, dtype=int)
-        self.beat_indices = torch.arange(start=self.chroma_indices[-1], end=self.dim, step=1, dtype=1)
+        self.beat_indices = torch.arange(start=self.chroma_indices[-1].item(), end=self.dim, step=1, dtype=int)
 
 
     def _downsampling_factor(self) -> int:
