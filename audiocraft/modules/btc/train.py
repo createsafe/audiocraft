@@ -77,7 +77,7 @@ if not os.path.exists(os.path.join(asset_path, ckpt_path)):
 # Load model
 if os.path.isfile(os.path.join(asset_path, ckpt_path, ckpt_file_name % restore_epoch)):
     checkpoint = torch.load(os.path.join(asset_path, ckpt_path, ckpt_file_name % restore_epoch))
-    model.load_state_dict(checkpoint['model'])
+    model.load_state_dict(checkpoint['model'], strict=False)
     optimizer.load_state_dict(checkpoint['optimizer'])
     epoch = checkpoint['epoch']
     logger.info("restore model with %d epochs" % restore_epoch)
@@ -222,7 +222,7 @@ for epoch in range(restore_epoch, config.experiment['max_epoch']):
 # Load model
 if os.path.isfile(os.path.join(asset_path, ckpt_path, ckpt_file_name % last_best_epoch)):
     checkpoint = torch.load(os.path.join(asset_path, ckpt_path, ckpt_file_name % last_best_epoch))
-    model.load_state_dict(checkpoint['model'])
+    model.load_state_dict(checkpoint['model'], strict=False)
     logger.info("restore model with %d epochs" % last_best_epoch)
 else:
     raise NotImplementedError

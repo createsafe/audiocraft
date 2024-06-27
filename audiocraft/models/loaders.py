@@ -87,7 +87,7 @@ def load_compression_model(file_or_url_or_id: tp.Union[Path, str],
     cfg = OmegaConf.create(pkg['xp.cfg'])
     cfg.device = str(device)
     model = builders.get_compression_model(cfg)
-    model.load_state_dict(pkg['best_state'])
+    model.load_state_dict(pkg['best_state'], strict=False)
     model.eval()
     return model
 
@@ -126,7 +126,7 @@ def load_lm_model(file_or_url_or_id: tp.Union[Path, str],
     _delete_param(cfg, 'conditioners.args.merge_text_conditions_p')
     _delete_param(cfg, 'conditioners.args.drop_desc_p')
     model = builders.get_lm_model(cfg)
-    model.load_state_dict(pkg['best_state'])
+    model.load_state_dict(pkg['best_state'], strict=False)
     model.eval()
     model.cfg = cfg
     return model
@@ -155,12 +155,12 @@ def load_diffusion_models(file_or_url_or_id: tp.Union[Path, str],
         cfg = pkg[i]['cfg']
         model = builders.get_diffusion_model(cfg)
         model_dict = pkg[i]['model_state']
-        model.load_state_dict(model_dict)
+        model.load_state_dict(model_dict, strict=False)
         model.to(device)
         processor = builders.get_processor(cfg=cfg.processor,
                                            sample_rate=sample_rate)
         processor_dict = pkg[i]['processor_state']
-        processor.load_state_dict(processor_dict)
+        processor.load_state_dict(processor_dict, strict=False)
         processor.to(device)
         models.append(model)
         processors.append(processor)

@@ -9,6 +9,8 @@ Main model for using MusicGen. This will combine all the required components
 and provide easy access to the generation API.
 """
 
+import pprint
+
 import typing as tp
 import warnings
 
@@ -121,6 +123,293 @@ class MusicGen(BaseGenModel):
             'cfg_coef': cfg_coef,
             'two_step_cfg': two_step_cfg,
         }
+    
+    def generate(self, descriptions: tp.List[str], progress: bool = False, return_tokens: bool = False) \
+            -> tp.Union[torch.Tensor, tp.Tuple[torch.Tensor, torch.Tensor]]:
+        """Generate samples conditioned on text.
+
+        Args:
+            descriptions (list of str): A list of strings used as text conditioning.
+            progress (bool, optional): Flag to display progress of the generation process. Defaults to False.
+        """
+        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions, None)
+        assert prompt_tokens is None
+        tokens = self._generate_tokens(attributes, prompt_tokens, progress)
+        if return_tokens:
+            return self.generate_audio(tokens), tokens
+        return self.generate_audio(tokens)
+
+    def generate_with_chroma(self, descriptions: tp.List[str], melody_wavs: MelodyType,
+                             melody_sample_rate: int, progress: bool = False,
+                             return_tokens: bool = False) -> tp.Union[torch.Tensor,
+                                                                      tp.Tuple[torch.Tensor, torch.Tensor]]:
+        """Generate samples conditioned on text and melody.
+
+        Args:
+            descriptions (list of str): A list of strings used as text conditioning.
+            melody_wavs: (torch.Tensor or list of Tensor): A batch of waveforms used as
+                melody conditioning. Should have shape [B, C, T] with B matching the description length,
+                C=1 or 2. It can be [C, T] if there is a single description. It can also be
+                a list of [C, T] tensors.
+            melody_sample_rate: (int): Sample rate of the melody waveforms.
+            progress (bool, optional): Flag to display progress of the generation process. Defaults to False.
+        """
+        if isinstance(melody_wavs, torch.Tensor):
+            if melody_wavs.dim() == 2:
+                melody_wavs = melody_wavs[None]
+            if melody_wavs.dim() != 3:
+                raise ValueError("Melody wavs should have a shape [B, C, T].")
+            melody_wavs = list(melody_wavs)
+        else:
+            for melody in melody_wavs:
+                if melody is not None:
+                    assert melody.dim() == 2, "One melody in the list has the wrong number of dims."
+
+        melody_wavs = [
+            convert_audio(wav, melody_sample_rate, self.sample_rate, self.audio_channels)
+            if wav is not None else None
+            for wav in melody_wavs]
+        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions=descriptions, prompt=None,
+                                                                        melody_wavs=melody_wavs)
+        assert prompt_tokens is None
+        tokens = self._generate_tokens(attributes, prompt_tokens, progress)
+        if return_tokens:
+            return self.generate_audio(tokens), tokens
+        return self.generate_audio(tokens)
+
+    def generate_continuation(self, prompt: torch.Tensor, prompt_sample_rate: int,
+                              descriptions: tp.Optional[tp.List[tp.Optional[str]]] = None,
+                              progress: bool = False, return_tokens: bool = False) \
+            -> tp.Union[torch.Tensor, tp.Tuple[torch.Tensor, torch.Tensor]]:
+        """Generate samples conditioned on audio prompts.
+
+        Args:
+            prompt (torch.Tensor): A batch of waveforms used for continuation.
+                Prompt should be [B, C, T], or [C, T] if only one sample is generated.
+            prompt_sample_rate (int): Sampling rate of the given audio waveforms.
+            descriptions (list of str, optional): A list of strings used as text conditioning. Defaults to None.
+            progress (bool, optional): Flag to display progress of the generation process. Defaults to False.
+        """
+        if prompt.dim() == 2:
+            prompt = prompt[None]
+        if prompt.dim() != 3:
+            raise ValueError("prompt should have 3 dimensions: [B, C, T] (C = 1).")
+        prompt = convert_audio(prompt, prompt_sample_rate, self.sample_rate, self.audio_channels)
+        if descriptions is None:
+            descriptions = [None] * len(prompt)
+        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions, prompt)
+        assert prompt_tokens is not None
+        tokens = self._generate_tokens(attributes, prompt_tokens, progress)
+        if return_tokens:
+            return self.generate_audio(tokens), tokens
+        return self.generate_audio(tokens)
+    
+    def generate_continuation_with_audio_token(self, prompt, 
+                              descriptions: tp.Optional[tp.List[tp.Optional[str]]] = None,
+                              progress: bool = False, return_tokens: bool = False) \
+            -> tp.Union[torch.Tensor, tp.Tuple[torch.Tensor, torch.Tensor]]:
+        """Generate samples conditioned on audio prompts.
+
+        Args:
+            prompt (torch.Tensor): A batch of waveforms used for continuation.
+                Prompt should be [B, C, T], or [C, T] if only one sample is generated.
+            prompt_sample_rate (int): Sampling rate of the given audio waveforms.
+            descriptions (list of str, optional): A list of strings used as text conditioning. Defaults to None.
+            progress (bool, optional): Flag to display progress of the generation process. Defaults to False.
+        """
+        
+        if descriptions is None:
+            descriptions = [None] * len(prompt)
+        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions, None)
+        assert prompt_tokens is None
+        prompt_tokens = prompt
+        tokens = self._generate_tokens(attributes, prompt_tokens, progress)
+        if return_tokens:
+            return self.generate_audio(tokens), tokens
+        return self.generate_audio(tokens)
+
+    def generate_continuation_with_audio_chroma(self, prompt: torch.Tensor, prompt_sample_rate: int, melody_wavs: MelodyType,
+                             melody_sample_rate: int, descriptions: tp.Optional[tp.List[tp.Optional[str]]] = None,
+                              progress: bool = False, return_tokens: bool = False) \
+            -> tp.Union[torch.Tensor, tp.Tuple[torch.Tensor, torch.Tensor]]:
+        """Generate samples conditioned on audio prompts.
+
+        Args:
+            prompt (torch.Tensor): A batch of waveforms used for continuation.
+                Prompt should be [B, C, T], or [C, T] if only one sample is generated.
+            prompt_sample_rate (int): Sampling rate of the given audio waveforms.
+            descriptions (list of str, optional): A list of strings used as text conditioning. Defaults to None.
+            progress (bool, optional): Flag to display progress of the generation process. Defaults to False.
+        """
+        if prompt.dim() == 2:
+            prompt = prompt[None]
+        if prompt.dim() != 3:
+            raise ValueError("prompt should have 3 dimensions: [B, C, T] (C = 1).")
+        prompt = convert_audio(prompt, prompt_sample_rate, self.sample_rate, self.audio_channels)
+
+        if isinstance(melody_wavs, torch.Tensor):
+            if melody_wavs.dim() == 2:
+                melody_wavs = melody_wavs[None]
+            if melody_wavs.dim() != 3:
+                raise ValueError("Melody wavs should have a shape [B, C, T].")
+            melody_wavs = list(melody_wavs)
+        else:
+            for melody in melody_wavs:
+                if melody is not None:
+                    assert melody.dim() == 2, "One melody in the list has the wrong number of dims."
+
+        melody_wavs = [
+            convert_audio(wav, melody_sample_rate, self.sample_rate, self.audio_channels)
+            if wav is not None else None
+            for wav in melody_wavs]
+        
+        if descriptions is None:
+            descriptions = [None] * len(prompt)
+        
+        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions=descriptions, prompt=prompt, melody_wavs=melody_wavs)
+        assert prompt_tokens is not None
+        tokens = self._generate_tokens(attributes, prompt_tokens, progress)
+        if return_tokens:
+            return self.generate_audio(tokens), tokens
+        return self.generate_audio(tokens)
+
+    def generate_continuation_with_audio_tokens_and_audio_chroma(self, prompt, melody_wavs: MelodyType,
+                             melody_sample_rate: int, descriptions: tp.Optional[tp.List[tp.Optional[str]]] = None,
+                              progress: bool = False, return_tokens: bool = False) \
+            -> tp.Union[torch.Tensor, tp.Tuple[torch.Tensor, torch.Tensor]]:
+        """Generate samples conditioned on audio prompts.
+
+        Args:
+            prompt (torch.Tensor): A batch of waveforms used for continuation.
+                Prompt should be [B, C, T], or [C, T] if only one sample is generated.
+            prompt_sample_rate (int): Sampling rate of the given audio waveforms.
+            descriptions (list of str, optional): A list of strings used as text conditioning. Defaults to None.
+            progress (bool, optional): Flag to display progress of the generation process. Defaults to False.
+        """
+        if isinstance(melody_wavs, torch.Tensor):
+            if melody_wavs.dim() == 2:
+                melody_wavs = melody_wavs[None]
+            if melody_wavs.dim() != 3:
+                raise ValueError("Melody wavs should have a shape [B, C, T].")
+            melody_wavs = list(melody_wavs)
+        else:
+            for melody in melody_wavs:
+                if melody is not None:
+                    assert melody.dim() == 2, "One melody in the list has the wrong number of dims."
+
+        melody_wavs = [
+            convert_audio(wav, melody_sample_rate, self.sample_rate, self.audio_channels)
+            if wav is not None else None
+            for wav in melody_wavs]
+        
+        if descriptions is None:
+            descriptions = [None] * len(prompt)
+        
+        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions=descriptions, prompt=None, melody_wavs=melody_wavs)
+        assert prompt_tokens is None
+        prompt_tokens = prompt
+        tokens = self._generate_tokens(attributes, prompt_tokens, progress)
+        if return_tokens:
+            return self.generate_audio(tokens), tokens
+        return self.generate_audio(tokens)
+
+    def generate_continuation_with_text_chroma(self, prompt: torch.Tensor, prompt_sample_rate: int, descriptions: tp.List[str], chord_texts: tp.Union[tp.List[str],str],
+                             progress: bool = False, bpm: tp.Union[float,int,tp.List[float],tp.List[int]] = 120, meter: tp.Optional[tp.Union[int,tp.List[int]]] = 4,
+                             return_tokens: bool = False) -> tp.Union[torch.Tensor,
+                                                                      tp.Tuple[torch.Tensor, torch.Tensor]]:
+        """Generate samples conditioned on text and melody.
+
+        Args:
+            descriptions (list of str): A list of strings used as text conditioning.
+            melody_wavs: (torch.Tensor or list of Tensor): A batch of waveforms used as
+                melody conditioning. Should have shape [B, C, T] with B matching the description length,
+                C=1 or 2. It can be [C, T] if there is a single description. It can also be
+                a list of [C, T] tensors.
+            melody_sample_rate: (int): Sample rate of the melody waveforms.
+            progress (bool, optional): Flag to display progress of the generation process. Defaults to False.
+        """
+        if prompt.dim() == 2:
+            prompt = prompt[None]
+        if prompt.dim() != 3:
+            raise ValueError("prompt should have 3 dimensions: [B, C, T] (C = 1).")
+        prompt = convert_audio(prompt, prompt_sample_rate, self.sample_rate, self.audio_channels)
+
+        if isinstance(chord_texts, str):
+            chord_texts = [chord_texts]
+
+        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions=descriptions, prompt=prompt,
+                                                                        melody_wavs=chord_texts, bpm=bpm, meter=meter)
+
+        tokens = self._generate_tokens(attributes, prompt_tokens, progress)
+        if return_tokens:
+            return self.generate_audio(tokens), tokens
+        return self.generate_audio(tokens)
+
+    def generate_continuation_with_audio_tokens_and_text_chroma(self, prompt, descriptions: tp.List[str], chord_texts: tp.Union[tp.List[str],str],
+                             progress: bool = False, bpm: tp.Union[float,int,tp.List[float],tp.List[int]] = 120, meter: tp.Optional[tp.Union[int,tp.List[int]]] = 4,
+                             return_tokens: bool = False) -> tp.Union[torch.Tensor,
+                                                                      tp.Tuple[torch.Tensor, torch.Tensor]]:
+        """Generate samples conditioned on text and melody.
+
+        Args:
+            descriptions (list of str): A list of strings used as text conditioning.
+            melody_wavs: (torch.Tensor or list of Tensor): A batch of waveforms used as
+                melody conditioning. Should have shape [B, C, T] with B matching the description length,
+                C=1 or 2. It can be [C, T] if there is a single description. It can also be
+                a list of [C, T] tensors.
+            melody_sample_rate: (int): Sample rate of the melody waveforms.
+            progress (bool, optional): Flag to display progress of the generation process. Defaults to False.
+        """
+        
+        if isinstance(chord_texts, str):
+            chord_texts = [chord_texts]
+
+        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions=descriptions, prompt=None,
+                                                                        melody_wavs=chord_texts, bpm=bpm, meter=meter)
+        prompt_tokens = prompt
+        tokens = self._generate_tokens(attributes, prompt_tokens, progress)
+        if return_tokens:
+            return self.generate_audio(tokens), tokens
+        return self.generate_audio(tokens)
+    
+    def generate_with_text_chroma(self, 
+                                  descriptions: tp.List[str], 
+                                  musical_symbols: tp.List[dict],
+                                  progress: bool = False, 
+                                  bpm: tp.Union[float,int,tp.List[float],tp.List[int]] = 120, 
+                                  meter: tp.Optional[tp.Union[int,tp.List[int]]] = 4,
+                                  return_tokens: bool = False) -> tp.Union[torch.Tensor,
+                                                                      tp.Tuple[torch.Tensor, torch.Tensor]]:
+        """Generate music from text and symbols (chords and downbeats).
+
+        Args:
+            descriptions (tp.List[str]): text descriptions of musical content
+            musical_symbols (tp.List[dict]): dict with 'chords' and 'beats' keys
+            progress (bool, optional): show progress bar. Defaults to False.
+            bpm (tp.Union[float,int,tp.List[float],tp.List[int]], optional): beats per minute. Defaults to 120.
+            meter (tp.Optional[tp.Union[int,tp.List[int]]], optional): beats per measure. Defaults to 4.
+            return_tokens (bool, optional): Whether to return tokens as second output. Defaults to False.
+
+        Returns:
+            tp.Union[torch.Tensor, tp.Tuple[torch.Tensor, torch.Tensor]]: audio or audio and tokens
+
+        `musical_symbols` should look like this:
+        ```
+        musical_symbols = {
+            'chords': str,
+            'downbeats': array
+        }
+        ```
+        """
+        assert all(isinstance(lst, dict) for lst in musical_symbols), f"all elements of `musical_symbols` must be type `dict`."
+
+        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions=descriptions, prompt=None,
+                                                                        melody_wavs=musical_symbols, bpm=bpm, meter=meter)
+        assert prompt_tokens is None
+        tokens = self._generate_tokens(attributes, prompt_tokens, progress)
+        if return_tokens:
+            return self.generate_audio(tokens), tokens
+        return self.generate_audio(tokens)
 
     def generate_with_wav(self, descriptions: tp.List[str], melody_wavs: MelodyType,
                              melody_sample_rate: int, progress: bool = False,
@@ -149,12 +438,10 @@ class MusicGen(BaseGenModel):
                     assert melody.dim() == 2, "One melody in the list has the wrong number of dims."
 
         melody_wavs = [
-                convert_audio(wav, melody_sample_rate, self.sample_rate, self.audio_channels)
-                if wav is not None else None
-                for wav in melody_wavs
-            ]
-        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions=descriptions, 
-                                                                        prompt=None,
+            convert_audio(wav, melody_sample_rate, self.sample_rate, self.audio_channels)
+            if wav is not None else None
+            for wav in melody_wavs]
+        attributes, prompt_tokens = self._prepare_tokens_and_attributes(descriptions=descriptions, prompt=None,
                                                                         melody_wavs=melody_wavs)
         assert prompt_tokens is None
         tokens = self._generate_tokens(attributes, prompt_tokens, progress)
@@ -177,6 +464,7 @@ class MusicGen(BaseGenModel):
             melody_wavs (torch.Tensor, optional): A batch of waveforms
                 used as melody conditioning. Defaults to None.
         """
+
         attributes = [
             ConditioningAttributes(text={'description': description})
             for description in descriptions]

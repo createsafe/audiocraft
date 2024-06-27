@@ -15,6 +15,7 @@ import random
 import re
 import typing as tp
 import warnings
+import json
 
 import numpy as np
 import einops
@@ -1215,10 +1216,10 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
         self.__dict__['demucs'] = pretrained.get_model('htdemucs').to(device)
         stem_sources: list = self.demucs.sources 
         self.stem_indices = torch.LongTensor([stem_sources.index('vocals'), stem_sources.index('bass'), stem_sources.index('other')]).to(device)        
-        self.chroma_len = self._get_num_frames()
-        self.bar2chromabin = self.sample_rate / self.winhop
+        self.num_frames = self._get_num_frames()
+        self.frames_per_second = self.sample_rate / self.winhop
 
-        self.chroma = ChordExtractor(device = device, sample_rate=sample_rate, n_chroma=n_chroma, max_duration = duration, chroma_len = self.chroma_len, winhop = self.winhop).to(device)
+        self.chroma = ChordExtractor(device = device, sample_rate=sample_rate, n_chroma=n_chroma, max_duration = duration, chroma_len = self.num_frames, winhop = self.winhop).to(device)
         self.chords = chords.Chords()
         self.chroma_coefficient = 1
 
@@ -1226,17 +1227,10 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
                                   hop_size=self.winhop,
                                   device=device)
         
-        self.continuation_count = 0 # for infinite generation with text chroma
-        #3 Layered MLP projection override
-        '''
-        self.output_proj = nn.Sequential(
-            nn.Linear(n_chroma, 128),
-            nn.ReLU(),
-            nn.Linear(128, 256),
-            nn.ReLU(),
-            nn.Linear(256, output_dim)
-        )
-        '''
+        self.continuation_count = 0 
+
+        self.chroma_indices = torch.arange(start=0, end=12, step=1, dtype=int)
+        self.beat_indices = torch.arange(start=self.chroma_indices[-1], end=self.dim, step=1, dtype=1)
 
 
     def _downsampling_factor(self) -> int:
@@ -1359,7 +1353,7 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
         return out.to(self.device)
 
     def set_continuation_count(self, sub_duration_ratio, current_iter):
-        self.continuation_count = int(self.chroma_len * sub_duration_ratio * current_iter)
+        self.continuation_count = int(self.num_frames * sub_duration_ratio * current_iter)
 
     @torch.no_grad()
     def _get_wav_embedding(self, x: tp.Union[WavCondition, WavChordTextCondition]) -> torch.Tensor:
@@ -1377,60 +1371,108 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
             no_nullified_cond = x.wav.shape[-1] > 1
             if sampled_wav is not None:
                 chroma = self._compute_wav_embedding(sampled_wav, self.sample_rate)
-                # print("111111")
+                
             elif self.cache is not None and no_undefined_paths and no_nullified_cond:
                 paths = [Path(p) for p in x.path if p is not None]
                 chroma = self.cache.get_embed_from_cache(paths, x)
-                # print("222222") #Works here
+                
             else:
                 assert all(sr == x.sample_rate[0] for sr in x.sample_rate), "All sample rates in batch should be equal."
                 chroma = self._compute_wav_embedding(x.wav, x.sample_rate[0])
-                # print("333333") #and here in training
-        else:
-            chromas = []
-            for wav, bpm, meter in zip(x.wav, x.bpm, x.meter):
-                chroma = torch.zeros([self.chroma_len, self.dim])
-                count = 0
-                offset = 0
                 
-                stext = wav.split(" ")
-                barsec = 60/(bpm/meter)
-                timebin = barsec * self.bar2chromabin
-                while count < self.chroma_len:
-                    for tokens in stext:
-                        if count >= self.chroma_len: 
-                            break
-                        stoken = tokens.split(',')
-                        for token in stoken:
-                            off_timebin = timebin + offset
-                            rounded_timebin = round(off_timebin)
-                            offset = off_timebin - rounded_timebin
-                            offset = offset/len(stoken)
-                            add_step = rounded_timebin//len(stoken)
-                            mhot = self.chords.chord(token)
-                            rolled = np.roll(mhot[2], mhot[0])
-                            for i in range(count, count + add_step):
-                                if self.continuation_count > 0:
-                                    self.continuation_count -= 1
-                                    continue
-                                if count >= self.chroma_len: 
-                                    break
-                                chroma[i] = torch.Tensor(rolled)
-                                count += 1
-                chromas.append(chroma)
-            chroma = torch.stack(chromas)*self.chroma_coefficient
+        else: 
+            
+
+            # text formatted as a dictionary with keys:
+            # 'chords': "A:min D:min C:maj ..."
+            # 'downbeats': [0.1, 0.5, 0.9, ...]
+            # 
+            # the number of "bars" represented in `chords` must equal the number of downbeats
+            
+            musical_symbols = x.wav
+            chords_text = musical_symbols['chords']
+            downbeats = musical_symbols['downbeats']
+
+            number_of_bars_in_chords_text = chords_text.count(' ')
+            number_of_bars_in_downbeats = len(downbeats)
+            if number_of_bars_in_chords_text is not number_of_bars_in_downbeats:
+                ValueError(f"Number of bars in `chords_text` must be equal to number of downbeats in `downbeats`")
+            
+            x.wav = musical_symbols['chords']
+            chroma = self._str2chroma(x)
+            
+            x.wav = musical_symbols['downbeats']
+            ramps = self._downbeats2ramps(x)
+            
+
+            
 
         if self.match_len_on_eval:
             B, T, C = chroma.shape
-            if T > self.chroma_len:
-                chroma = chroma[:, :self.chroma_len]
+            if T > self.num_frames:
+                chroma = chroma[:, :self.num_frames]
                 logger.debug(f"Chroma was truncated to match length! ({T} -> {chroma.shape[1]})")
-            elif T < self.chroma_len:
-                n_repeat = int(math.ceil(self.chroma_len / T))
+            elif T < self.num_frames:
+                n_repeat = int(math.ceil(self.num_frames / T))
                 chroma = chroma.repeat(1, n_repeat, 1)
-                chroma = chroma[:, :self.chroma_len]
+                chroma = chroma[:, :self.num_frames]
                 logger.debug(f"Chroma was repeated to match length! ({T} -> {chroma.shape[1]})")
         return chroma
+    
+    def _downbeats2ramps(self, x: tp.Union[WavCondition, WavChordTextCondition]) -> torch.Tensor:
+        from beat import beats2sawtooth
+        beat_ramps = [] 
+        for downbeats, beats_per_measure in zip(x.wav, x.meter):
+            # make beats from downbeats
+            beat_times = []
+            beat_positions = []
+            for n in range(downbeats[:-1]):
+                start = downbeats[n]
+                end = downbeats[n+1]
+                beat_times += np.linspace(start, end, beats_per_measure, False).tolist()
+                beat_positions += np.arange(start=1, stop=beats_per_measure+1)
+
+            ramp = beats2sawtooth(sample_rate=self.sample_rate,
+                                    beat_times=beat_times,
+                                    beat_positions=beat_positions,
+                                    num_frames=self.num_frames)
+
+            beat_ramps.append(ramp)
+        return beat_ramps
+    
+    def _str2chroma(self, x: tp.Union[WavCondition, WavChordTextCondition]) -> torch.Tensor:
+        chromas = []
+        for chord_text, bpm, meter in zip(x.wav, x.bpm, x.meter):
+            chroma = torch.zeros([self.num_frames, self.dim])
+            count = 0
+            offset = 0
+            
+            stext = chord_text.split(" ")
+            barsec = 60/(bpm/meter)
+            timebin = barsec * self.frames_per_second
+            while count < self.num_frames:
+                for tokens in stext:
+                    if count >= self.num_frames: 
+                        break
+                    stoken = tokens.split(',')
+                    for token in stoken:
+                        off_timebin = timebin + offset
+                        rounded_timebin = round(off_timebin)
+                        offset = off_timebin - rounded_timebin
+                        offset = offset/len(stoken)
+                        add_step = rounded_timebin//len(stoken)
+                        mhot = self.chords.chord(token)
+                        rolled = np.roll(mhot[2], mhot[0])
+                        for i in range(count, count + add_step):
+                            if self.continuation_count > 0:
+                                self.continuation_count -= 1
+                                continue
+                            if count >= self.num_frames: 
+                                break
+                            chroma[i] = torch.Tensor(rolled)
+                            count += 1
+            chromas.append(chroma)
+        chroma = torch.stack(chromas)*self.chroma_coefficient
 
     def tokenize(self, x: tp.Union[WavCondition, WavChordTextCondition]) -> tp.Union[WavCondition, WavChordTextCondition]:
         if isinstance(x, WavCondition):

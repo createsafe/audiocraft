@@ -1,3 +1,6 @@
+from enum import Enum
+import typing as tp
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch 
@@ -33,16 +36,50 @@ def impulse2sawtooth(signal: torch.Tensor) -> torch.Tensor:
 
     return result
 
-def beats2sawtooth(wav, sample_rate, hop_size, beat_times, beat_positions):
+class MetricalUnits(Enum):
     BEAT = 0
-    DOWNBEAT = 1
-    NUM_BEAT_CLASSES = 2
+    MEASURE = 1
 
-    num_samples = wav.shape[-1]
-    duration = num_samples/sample_rate
-    hop_times = torch.arange(0, duration, step=hop_size/sample_rate)
-    num_frames = len(hop_times)
-    frames = torch.zeros(size=(NUM_BEAT_CLASSES, num_frames))
+def beats2sawtooth(*, 
+                   wav: torch.Tensor=None, 
+                   sample_rate: int=None, 
+                   hop_size: int=None, 
+                   beat_times: tp.Iterable=None, 
+                   beat_positions: tp.Iterable=None,
+                   num_frames: int=None) -> torch.Tensor:
+    """Turn a list of beats into metrical phase matrix.
+
+    Args:
+        wav (torch.Tensor, optional): Audio input if available. Defaults to None.
+        sample_rate (int, optional): signal sample rate. Defaults to None.
+        hop_size (int, optional): Hop size. Defaults to None.
+        beat_times (tp.Iterable, optional): List of beat times. Defaults to None.
+        beat_positions (tp.Iterable, optional): List of beat positions. Defaults to None.
+        num_frames (int, optional): Number of frames. Defaults to None.
+
+    Returns:
+        torch.Tensor: ramps going from 0 to 1 synchronous to metrical units of beat and 
+                      measure.
+
+    Usage: 
+    - use either with `wav` or `num_frames`, but not both!
+    """
+
+    assert wav or num_frames, f"Must provide `wav` or `num_frames`."
+    if wav and num_frames:
+        Warning(f"`wav` and `num_frames` provided; using `wav`.")
+
+    if wav:
+        num_samples = wav.shape[-1]
+        duration = num_samples/sample_rate
+        hop_times = torch.arange(0, duration, step=hop_size/sample_rate)
+        num_frames = len(hop_times)
+    else:
+        duration = num_frames * hop_size / sample_rate
+        hop_times = torch.arange(0, duration, step=hop_size/sample_rate)
+
+    frames = torch.zeros(size=(len(MetricalUnits), num_frames))
+        
 
     beat_frames = list()
     downbeat_frames = list()
@@ -50,14 +87,14 @@ def beats2sawtooth(wav, sample_rate, hop_size, beat_times, beat_positions):
     for n in range(len(hop_times[:-1])):
         # find frames in which beats fall
         if any([t >= hop_times[n] and t < hop_times[n+1] for t in beat_times]):
-            frames[BEAT, n] = 1
+            frames[MetricalUnits.BEAT, n] = 1
             beat_frames.append(n)
         # find frames in which downbeats fall
         if any([t >= hop_times[n] and t < hop_times[n+1] and p == 1 for t, p in zip(beat_times, beat_positions)]):
-            frames[DOWNBEAT, n] = 1
+            frames[MetricalUnits.MEASURE, n] = 1
             downbeat_frames.append(n)
 
-    for n in range(NUM_BEAT_CLASSES):
+    for n in range(len(MetricalUnits)):
         frames[n, :] = impulse2sawtooth(frames[n, :])
 
     return frames
@@ -102,7 +139,7 @@ class BeatExtractor(nn.Module):
             beat_times = beats[:, 0]
             beat_positions = beats[:, 1]
             
-            frames = beats2sawtooth(wav, 
+            frames = beats2sawtooth(wav=wav, 
                                     sample_rate=self.sample_rate, 
                                     hop_size=self.hop_size,
                                     beat_times=beat_times,

@@ -187,7 +187,7 @@ class MusicGenSolver(base.StandardSolver):
             # from the original `cfg.compression_model_checkpoint` location.
             compression_model_state = state.pop('compression_model')
             before_hash = model_hash(self.compression_model)
-            self.compression_model.load_state_dict(compression_model_state)
+            self.compression_model.load_state_dict(compression_model_state, strict=False)
             after_hash = model_hash(self.compression_model)
             if before_hash != after_hash:
                 raise RuntimeError(

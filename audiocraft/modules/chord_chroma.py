@@ -51,7 +51,7 @@ class ChordExtractor(nn.Module):
             checkpoint = torch.load(self.model_file)
             self.mean = checkpoint['mean']
             self.std = checkpoint['std']
-            self.model.load_state_dict(checkpoint['model'])
+            self.model.load_state_dict(checkpoint['model'], strict=False)
 
     def forward(self, wavs:torch.Tensor) -> torch.Tensor:
         sr = self.config.mp3['song_hz']

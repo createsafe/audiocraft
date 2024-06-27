@@ -295,7 +295,7 @@ class CompressionSolver(base.StandardSolver):
 
         assert 'best_state' in state and state['best_state'] != {}
         assert 'exported' not in state, "When loading an exported checkpoint, use the //pretrained/ prefix."
-        compression_model.load_state_dict(state['best_state']['model'])
+        compression_model.load_state_dict(state['best_state']['model'], strict=False)
         compression_model.eval()
         logger.info("Compression model loaded!")
         return compression_model

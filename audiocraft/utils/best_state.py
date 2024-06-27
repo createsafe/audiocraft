@@ -78,4 +78,7 @@ class BestStateDictManager(flashy.state.StateDictSource):
     def load_state_dict(self, state: flashy.state.StateDict):
         for name, sub_state in state.items():
             for k, v in sub_state.items():
-                self.states[name][k].copy_(v)
+                try:
+                    self.states[name][k].copy_(v)
+                except Exception as e:
+                    logger.warn(f"Error loading state for {name}.{k}: {e} (bypassing)")

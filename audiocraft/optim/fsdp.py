@@ -12,12 +12,14 @@ from contextlib import contextmanager
 import typing as tp
 import dora
 import torch
+import logging
 
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import (
     MixedPrecision, ShardingStrategy, FullStateDictConfig, StateDictType)
 from torch.distributed._shard.sharded_tensor.api import ShardedTensor
 
+logger = logging.getLogger(__name__)
 
 def is_fsdp_used() -> bool:
     """Return whether we are using FSDP."""
@@ -117,22 +119,24 @@ def wrap_with_fsdp(cfg, model: torch.nn.Module,
     return wrapped
 
 
+
 def purge_fsdp(model: FSDP):
     """Purge the FSDP cached shard inside the model. This should
     allow setting the best state or switching to the EMA.
     """
     from torch.distributed.fsdp._runtime_utils import _reshard  # type: ignore
+    # This signature changed in torch 2.1
+    # https://github.com/pytorch/pytorch/commit/a8329676273ac12f1fadfbcdd19c500d84998345
+    # Ticket opened: https://github.com/facebookresearch/audiocraft/issues/450
     for module in FSDP.fsdp_modules(model):
-        handles = module._handles
-        if not handles:
+        handle = module._handle
+        if not handle:
             continue
-        handle = handles[0]
         unsharded_flat_param = handle._get_padded_unsharded_flat_param()
         storage_size: int = unsharded_flat_param._typed_storage()._size()  # type: ignore
         if storage_size == 0:
             continue
-        true_list = [True for h in handles]
-        _reshard(module, handles, true_list)
+        _reshard(module, handle, True)
 
 
 class _FSDPFixStateDict(FSDP):
@@ -152,7 +156,7 @@ class _FSDPFixStateDict(FSDP):
 
     def load_state_dict(self, state: tp.Dict[str, tp.Any]):  # type: ignore
         if self._state_dict_type is StateDictType.FULL_STATE_DICT:
-            super().load_state_dict(state)
+            super().load_state_dict(state, strict=False)
             purge_fsdp(self)
             return
         # Fix FSDP load state dict in all situation.
@@ -160,10 +164,10 @@ class _FSDPFixStateDict(FSDP):
         current_state = dict(super().state_dict())
         for key, value in state.items():
             key = _FSDPFixStateDict._name_without_fsdp_prefix(key)
-            if key not in current_state:
-                # Emulate strict loading manually.
-                raise RuntimeError(f"Unknown state key {key}")
-            current_state[key].copy_(value)
+            try:
+                current_state[key].copy_(value)
+            except Exception as e:
+                logger.warn(f"Error loading state for {key}: {e} (bypassing)")
 
         # Purging cached weights from previous forward.
         purge_fsdp(self)
