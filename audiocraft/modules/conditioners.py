@@ -17,6 +17,7 @@ import typing as tp
 import warnings
 import json
 
+import matplotlib.pyplot as plt
 import numpy as np
 import einops
 from num2words import num2words
@@ -1241,7 +1242,7 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
         self.continuation_count = 0 
 
         self.chroma_indices = torch.arange(start=0, end=12, step=1, dtype=int)
-        self.beat_indices = torch.arange(start=self.chroma_indices[-1].item(), end=self.dim, step=1, dtype=int)
+        self.beat_indices = torch.arange(start=self.chroma_indices[-1].item()+1, end=self.dim, step=1, dtype=int)
 
 
     def _downsampling_factor(self) -> int:
@@ -1392,7 +1393,6 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
                 chroma = self._compute_wav_embedding(x.wav, x.sample_rate[0])
                 
         else: 
-            
 
             # text formatted as a dictionary with keys:
             # 'chords': "A:min D:min C:maj ..."
@@ -1401,60 +1401,72 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
             # the number of "bars" represented in `chords` must equal the number of downbeats
             
             musical_symbols = x.wav
-            chords_text = musical_symbols['chords']
-            downbeats = musical_symbols['downbeats']
+            chords_text = [s['chords'] for s in musical_symbols[:-1] if s != 'N']
+            downbeats = [s['downbeats'] for s in musical_symbols[:-1] if s != 'N']
 
-            number_of_bars_in_chords_text = chords_text.count(' ')
-            number_of_bars_in_downbeats = len(downbeats)
-            if number_of_bars_in_chords_text is not number_of_bars_in_downbeats:
-                ValueError(f"Number of bars in `chords_text` must be equal to number of downbeats in `downbeats`")
-            
-            x.wav = musical_symbols['chords']
-            chroma = self._str2chroma(x)
-            
-            x.wav = musical_symbols['downbeats']
-            ramps = self._downbeats2ramps(x)
-            
+            if len(chords_text) is not len(downbeats):
+                ValueError("List of chords_text and list of downbeats must be the same length")
+            else:
+                batch_size = len(chords_text)
 
+            features = torch.zeros(size=(batch_size, self.num_frames, self.dim))
+
+            for batch, (chords, downbeat) in enumerate(zip(chords_text, downbeats)):
+
+                number_of_bars_in_chords_text = chords.count(' ')
+                number_of_bars_in_downbeats = len(downbeat)
+                if number_of_bars_in_chords_text is not number_of_bars_in_downbeats:
+                    ValueError(f"Number of bars in `chords_text` must be equal to number of downbeats in `downbeats`")
+            
+            
+                chroma = self._str2chroma([chords], x.bpm[batch], x.meter[batch])
+                ramps = self._downbeats2ramps(downbeat, x.meter[batch])
+                
+                feature = torch.zeros(size=(self.num_frames, self.dim))
+                feature[:, self.chroma_indices] = chroma.squeeze()
+                feature[:, self.beat_indices] = ramps[0].T
+            
+                features[batch, :, :] = feature
+            
             
 
         if self.match_len_on_eval:
-            B, T, C = chroma.shape
+            B, T, C = features.shape
             if T > self.num_frames:
-                chroma = chroma[:, :self.num_frames]
-                logger.debug(f"Chroma was truncated to match length! ({T} -> {chroma.shape[1]})")
+                features = features[:, :self.num_frames]
+                logger.debug(f"features was truncated to match length! ({T} -> {features.shape[1]})")
             elif T < self.num_frames:
                 n_repeat = int(math.ceil(self.num_frames / T))
-                chroma = chroma.repeat(1, n_repeat, 1)
-                chroma = chroma[:, :self.num_frames]
-                logger.debug(f"Chroma was repeated to match length! ({T} -> {chroma.shape[1]})")
-        return chroma
+                features = features.repeat(1, n_repeat, 1)
+                features = features[:, :self.num_frames]
+                logger.debug(f"features was repeated to match length! ({T} -> {features.shape[1]})")
+        return features
     
-    def _downbeats2ramps(self, x: tp.Union[WavCondition, WavChordTextCondition]) -> torch.Tensor:
+    def _downbeats2ramps(self, downbeats: tp.Iterable, beats_per_measure: tp.Iterable) -> torch.Tensor:
         from beat import beats2sawtooth
         beat_ramps = [] 
-        for downbeats, beats_per_measure in zip(x.wav, x.meter):
-            # make beats from downbeats
-            beat_times = []
-            beat_positions = []
-            for n in range(downbeats[:-1]):
-                start = downbeats[n]
-                end = downbeats[n+1]
-                beat_times += np.linspace(start, end, beats_per_measure, False).tolist()
-                beat_positions += np.arange(start=1, stop=beats_per_measure+1)
+        # make beats from downbeats
+        beat_times = []
+        beat_positions = []
+        for n in range(len(downbeats[:-1])):
+            start = downbeats[n]
+            end = downbeats[n+1]
+            beat_times += np.linspace(start, end, beats_per_measure, False).tolist()
+            beat_positions += np.arange(start=1, stop=beats_per_measure+1).tolist()
 
-            ramp = beats2sawtooth(sample_rate=self.sample_rate,
-                                    beat_times=beat_times,
-                                    beat_positions=beat_positions,
-                                    num_frames=self.num_frames)
+        ramp = beats2sawtooth(sample_rate=self.sample_rate,
+                                beat_times=beat_times,
+                                beat_positions=beat_positions,
+                                num_frames=self.num_frames,
+                                hop_size=self.winhop)
 
-            beat_ramps.append(ramp)
+        beat_ramps.append(ramp)
         return beat_ramps
     
-    def _str2chroma(self, x: tp.Union[WavCondition, WavChordTextCondition]) -> torch.Tensor:
+    def _str2chroma(self, chords_texts, bpm, meter) -> torch.Tensor:
         chromas = []
-        for chord_text, bpm, meter in zip(x.wav, x.bpm, x.meter):
-            chroma = torch.zeros([self.num_frames, self.dim])
+        for chord_text in chords_texts:
+            chroma = torch.zeros([self.num_frames, len(self.chroma_indices)])
             count = 0
             offset = 0
             
@@ -1484,6 +1496,7 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
                             count += 1
             chromas.append(chroma)
         chroma = torch.stack(chromas)*self.chroma_coefficient
+        return chroma
 
     def tokenize(self, x: tp.Union[WavCondition, WavChordTextCondition]) -> tp.Union[WavCondition, WavChordTextCondition]:
         if isinstance(x, WavCondition):

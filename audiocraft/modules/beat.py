@@ -79,20 +79,14 @@ def beats2sawtooth(*,
         hop_times = torch.arange(0, duration, step=hop_size/sample_rate)
 
     frames = torch.zeros(size=(len(MetricalUnits), num_frames))
-        
-
-    beat_frames = list()
-    downbeat_frames = list()
 
     for n in range(len(hop_times[:-1])):
         # find frames in which beats fall
         if any([t >= hop_times[n] and t < hop_times[n+1] for t in beat_times]):
-            frames[MetricalUnits.BEAT, n] = 1
-            beat_frames.append(n)
+            frames[MetricalUnits.BEAT.value, n] = 1
         # find frames in which downbeats fall
         if any([t >= hop_times[n] and t < hop_times[n+1] and p == 1 for t, p in zip(beat_times, beat_positions)]):
-            frames[MetricalUnits.MEASURE, n] = 1
-            downbeat_frames.append(n)
+            frames[MetricalUnits.MEASURE.value, n] = 1
 
     for n in range(len(MetricalUnits)):
         frames[n, :] = impulse2sawtooth(frames[n, :])
