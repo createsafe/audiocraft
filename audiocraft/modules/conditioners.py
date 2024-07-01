@@ -1319,7 +1319,7 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
             return torch.zeros(size=(1, 1, 14))
         stems = self._get_stemmed_wav(wav, sample_rate)
         chroma = self._extract_chroma(stems)
-        beat_ramps = self.beat(wav).to(self.device)
+        beat_ramps = self.beat(wav, self.num_frames).to(self.device)
 
         # print(chroma.shape)
         # print(beat_ramps.shape)
