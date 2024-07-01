@@ -120,7 +120,7 @@ class BeatExtractor(nn.Module):
         self.device = device
         self.estimator = BeatNet(1, mode='offline', inference_model='DBN', plot=[], thread=False, device=device)
 
-    def forward(self, wav: torch.Tensor, num_frames: int):
+    def forward(self, wav: torch.Tensor, num_frames: int=None):
 
         num_samples = wav.shape[-1]
 
