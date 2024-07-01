@@ -1382,15 +1382,15 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
             no_undefined_paths = all(p is not None for p in x.path)
             no_nullified_cond = x.wav.shape[-1] > 1
             if sampled_wav is not None:
-                chroma = self._compute_wav_embedding(sampled_wav, self.sample_rate)
+                features = self._compute_wav_embedding(sampled_wav, self.sample_rate)
                 
             elif self.cache is not None and no_undefined_paths and no_nullified_cond:
                 paths = [Path(p) for p in x.path if p is not None]
-                chroma = self.cache.get_embed_from_cache(paths, x)
+                features = self.cache.get_embed_from_cache(paths, x)
                 
             else:
                 assert all(sr == x.sample_rate[0] for sr in x.sample_rate), "All sample rates in batch should be equal."
-                chroma = self._compute_wav_embedding(x.wav, x.sample_rate[0])
+                features = self._compute_wav_embedding(x.wav, x.sample_rate[0])
                 
         else: 
 
