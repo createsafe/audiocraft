@@ -120,12 +120,16 @@ class BeatExtractor(nn.Module):
         self.device = device
         self.estimator = BeatNet(1, mode='offline', inference_model='DBN', plot=[], thread=False, device=device)
 
-    def forward(self, wav: torch.Tensor):
-        T = wav.shape[-1]
-        num_frames = int(np.ceil(T / self.hop_size))
+    def forward(self, wav: torch.Tensor, num_frames: int):
+
+        num_samples = wav.shape[-1]
+
+        if not num_frames:
+            num_frames = int(np.ceil(num_samples / self.hop_size))
+        
         beat_feature = torch.zeros(size=(1, num_frames, 2))
 
-        if T < 4096:
+        if num_samples < 4096:
             pass
         else:
             beats = self.estimator.get_beats(audio=wav, sample_rate=self.sample_rate)
@@ -133,7 +137,7 @@ class BeatExtractor(nn.Module):
             beat_times = beats[:, 0]
             beat_positions = beats[:, 1]
             
-            frames = beats2sawtooth(wav=wav, 
+            frames = beats2sawtooth(num_frames=num_frames, 
                                     sample_rate=self.sample_rate, 
                                     hop_size=self.hop_size,
                                     beat_times=beat_times,
