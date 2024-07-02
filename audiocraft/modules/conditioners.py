@@ -1419,7 +1419,8 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
                     ValueError(f"Number of bars in `chords_text` must be equal to number of downbeats in `downbeats`")
             
             
-                chroma = self._str2chroma([chords], x.bpm[batch], x.meter[batch])
+                # TODO: rectify chords with downbeats given
+                chroma = self._chord_texts2chroma([chords], x.bpm[batch], x.meter[batch])
                 ramps = self._downbeats2ramps(downbeat, x.meter[batch])
                 
                 feature = torch.zeros(size=(self.num_frames, self.dim))
@@ -1463,40 +1464,102 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
         beat_ramps.append(ramp)
         return beat_ramps
     
-    def _str2chroma(self, chords_texts, bpm, meter) -> torch.Tensor:
-        chromas = []
-        for chord_text in chords_texts:
-            chroma = torch.zeros([self.num_frames, len(self.chroma_indices)])
-            count = 0
-            offset = 0
+    # def _str2chroma(self, chords_texts, bpm, meter) -> torch.Tensor:
+        # chromas = []
+        # for chord_text in chords_texts:
+        #     chroma = torch.zeros([self.num_frames, len(self.chroma_indices)])
+        #     count = 0
+        #     offset = 0
             
-            stext = chord_text.split(" ")
-            barsec = 60/(bpm/meter)
-            timebin = barsec * self.frames_per_second
-            while count < self.num_frames:
-                for tokens in stext:
-                    if count >= self.num_frames: 
-                        break
-                    stoken = tokens.split(',')
-                    for token in stoken:
-                        off_timebin = timebin + offset
-                        rounded_timebin = round(off_timebin)
-                        offset = off_timebin - rounded_timebin
-                        offset = offset/len(stoken)
-                        add_step = rounded_timebin//len(stoken)
-                        mhot = self.chords.chord(token)
-                        rolled = np.roll(mhot[2], mhot[0])
-                        for i in range(count, count + add_step):
-                            if self.continuation_count > 0:
-                                self.continuation_count -= 1
-                                continue
-                            if count >= self.num_frames: 
-                                break
-                            chroma[i] = torch.Tensor(rolled)
-                            count += 1
-            chromas.append(chroma)
-        chroma = torch.stack(chromas)*self.chroma_coefficient
-        return chroma
+        #     stext = chord_text.split(" ")
+        #     barsec = 60/(bpm/meter)
+        #     timebin = barsec * self.frames_per_second
+        #     while count < self.num_frames:
+        #         for tokens in stext:
+        #             if count >= self.num_frames: 
+        #                 break
+        #             stoken = tokens.split(',')
+        #             for token in stoken:
+        #                 off_timebin = timebin + offset
+        #                 rounded_timebin = round(off_timebin)
+        #                 offset = off_timebin - rounded_timebin
+        #                 offset = offset/len(stoken)
+        #                 add_step = rounded_timebin//len(stoken)
+        #                 mhot = self.chords.chord(token)
+        #                 rolled = np.roll(mhot[2], mhot[0])
+        #                 for i in range(count, count + add_step):
+        #                     if self.continuation_count > 0:
+        #                         self.continuation_count -= 1
+        #                         continue
+        #                     if count >= self.num_frames: 
+        #                         break
+        #                     chroma[i] = torch.Tensor(rolled)
+        #                     count += 1
+        #     chromas.append(chroma)
+        # chroma = torch.stack(chromas)*self.chroma_coefficient
+        # return chroma
+    def _chord_texts2chroma(self, chord_texts: tp.List[str], downbeat_times: tp.List[tp.List[float]]) -> torch.Tensor:
+        """Convert text descriptions of chords into chromatic features.
+
+        Args:
+            chord_texts (tp.List[str]): list of strings of harmonic tokens
+            downbeat_times (tp.List[tp.List[float]]): list of list of downbeat times
+
+        Returns:
+            torch.Tensor: chromatic features 
+
+        Usage:
+        - chord texts have the following syntax: 
+            - each measure is separated by a space `' '`
+            - each chord is a token root:flavor (e.g. "A:min" for A minor)
+            - a measure can be divided by a comma `','`
+                - if there are `n` tokens within a measure, then token accounts for 
+                  `1/n` of the measure duration
+                - for example "A:min,C,G,D" is a single measure, each token accounting
+                  for 1/4th of the measure
+        - each list in `downbeat_times` must have one more downbeat than each `chord_texts` 
+          has measures
+        
+        Example:
+        >>> chord_texts = [["A:min E:min C,D:7 G"]]
+        >>> downbeat_times = [[0.1, 0.5, 0.9, 1.3, 1.7]]
+        >>> _chord_texts2chroma(chord_texts, downbeat_times)
+        """
+
+        assert len(chord_texts) == len(downbeat_times), "must have same number of `downbeat_times` as `chord_texts`"
+
+        results = []
+        for text, times in zip(chord_texts, downbeat_times):
+
+            features = torch.zeros(size=[self.num_frames, len(self.chroma_indices)])
+
+            measures = text.split(' ')
+            assert len(measure) == len(downbeat_times)-1, "each list in `downbeat_times` must have one more downbeat than each `chord_texts` has measures"
+            for n, measure in enumerate(measures):
+                tokens = measure.split(',')
+                measure_start_time = times[n]
+                measure_end_time = times[n+1]
+                token_times = np.linspace(measure_start_time, measure_end_time, num=len(tokens)+1, endpoint=True)
+
+                for n, token in enumerate(tokens):
+                    
+                    root, _, intervals, _ = self.chords.chord(token)
+                    chroma = np.roll(intervals, root)
+
+
+                    start_frame = round(token_times[n] * self.frames_per_second)
+                    end_frame = round(token_times[n+1] * self.frames_per_second)
+                    frames = np.arange(start=start_frame, stop=end_frame)
+                    num_frames = start_frame - end_frame
+
+                    features[:, frames] = torch.Tensor(np.repeat(chroma, num_frames))
+
+            results.append(features)
+
+        return results
+                
+                
+
 
     def tokenize(self, x: tp.Union[WavCondition, WavChordTextCondition]) -> tp.Union[WavCondition, WavChordTextCondition]:
         if isinstance(x, WavCondition):
