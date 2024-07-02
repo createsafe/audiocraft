@@ -41,16 +41,18 @@ model = MusicGen(
 model.set_generation_params(duration=30)
 
 # load some audio
-audio, sample_rate = torchaudio.load('short/dreams.mp3')
-audio = audio[:1, :]
+# audio, sample_rate = torchaudio.load('short/dreams.mp3')
+# audio = audio[:1, :]
 
-descriptions=["a test text prompt", "and another"]
+# descriptions = ["a test"]
 # musical_symbols=[
 #     {
 #         'chords': "A:min E:min C:maj E:7",
-#         'downbeats': [0.1, 0.9, 1.7, 2.5]
+#         'downbeats': [0.1, 0.9, 1.7, 2.5, 2.9]
 #     }
 # ]
+
+descriptions=["a test text prompt", "and another"]
 musical_symbols=[
     {
         'chords': "A:min E:min",
@@ -69,8 +71,8 @@ start = time.time()
 wavs = model.generate_with_text_chroma(
     descriptions=descriptions,
     musical_symbols=musical_symbols,
-    bpm=[120]*2, 
-    meter=[4]*2
+    bpm=[120]*len(descriptions), 
+    meter=[4]*len(descriptions)
 )
 
 print(f'finished generation: {datetime.now()}')

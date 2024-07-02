@@ -1399,10 +1399,17 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
             # 'downbeats': [0.1, 0.5, 0.9, ...]
             # 
             # the number of "bars" represented in `chords` must equal the number of downbeats
-            
+
             musical_symbols = x.wav
-            chords_text = [s['chords'] if s != 'N' else None for s in musical_symbols[:-1]]
-            downbeats = [s['downbeats'] if s != 'N' else None for s in musical_symbols[:-1]]
+            chords_text = list()
+            downbeats = list()
+            for n, s in enumerate(x.wav):
+                if isinstance(s, dict):
+                    chords_text.append(s['chords'])
+                    downbeats.append(s['downbeats'])
+                else:
+                    chords_text.append(None)
+                    downbeats.append(None)
 
             if len(chords_text) is not len(downbeats):
                 ValueError("List of chords_text and list of downbeats must be the same length")
@@ -1419,8 +1426,6 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
                     if number_of_bars_in_chords_text is not number_of_bars_in_downbeats:
                         ValueError(f"Number of bars in `chords_text` must be equal to number of downbeats in `downbeats`")
                 
-                
-                    # TODO: rectify chords with downbeats given
                     chroma = self._chord_texts2chroma(chords, downbeat)
                     ramps = self._downbeats2ramps(downbeat, x.meter[batch])
                     
