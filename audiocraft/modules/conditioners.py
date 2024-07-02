@@ -1401,8 +1401,8 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
             # the number of "bars" represented in `chords` must equal the number of downbeats
             
             musical_symbols = x.wav
-            chords_text = [s['chords'] for s in musical_symbols[:-1] if s != 'N']
-            downbeats = [s['downbeats'] for s in musical_symbols[:-1] if s != 'N']
+            chords_text = [s['chords'] if s != 'N' else None for s in musical_symbols[:-1]]
+            downbeats = [s['downbeats'] if s != 'N' else None for s in musical_symbols[:-1]]
 
             if len(chords_text) is not len(downbeats):
                 ValueError("List of chords_text and list of downbeats must be the same length")
@@ -1413,19 +1413,22 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
 
             for batch, (chords, downbeat) in enumerate(zip(chords_text, downbeats)):
 
-                number_of_bars_in_chords_text = chords.count(' ')
-                number_of_bars_in_downbeats = len(downbeat)
-                if number_of_bars_in_chords_text is not number_of_bars_in_downbeats:
-                    ValueError(f"Number of bars in `chords_text` must be equal to number of downbeats in `downbeats`")
-            
-            
-                # TODO: rectify chords with downbeats given
-                chroma = self._chord_texts2chroma([chords], x.bpm[batch], x.meter[batch])
-                ramps = self._downbeats2ramps(downbeat, x.meter[batch])
+                if chords and downbeat:
+                    number_of_bars_in_chords_text = chords.count(' ')
+                    number_of_bars_in_downbeats = len(downbeat)
+                    if number_of_bars_in_chords_text is not number_of_bars_in_downbeats:
+                        ValueError(f"Number of bars in `chords_text` must be equal to number of downbeats in `downbeats`")
                 
-                feature = torch.zeros(size=(self.num_frames, self.dim))
-                feature[:, self.chroma_indices] = chroma.squeeze()
-                feature[:, self.beat_indices] = ramps[0].T
+                
+                    # TODO: rectify chords with downbeats given
+                    chroma = self._chord_texts2chroma(chords, downbeat)
+                    ramps = self._downbeats2ramps(downbeat, x.meter[batch])
+                    
+                    feature = torch.zeros(size=(self.num_frames, self.dim))
+                    feature[:, self.chroma_indices] = chroma.squeeze()
+                    feature[:, self.beat_indices] = ramps[0].T
+                else:
+                    pass
             
                 features[batch, :, :] = feature
             
@@ -1498,12 +1501,12 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
         #     chromas.append(chroma)
         # chroma = torch.stack(chromas)*self.chroma_coefficient
         # return chroma
-    def _chord_texts2chroma(self, chord_texts: tp.List[str], downbeat_times: tp.List[tp.List[float]]) -> torch.Tensor:
+    def _chord_texts2chroma(self, chord_text: str, downbeat_times: tp.List[float]) -> torch.Tensor:
         """Convert text descriptions of chords into chromatic features.
 
         Args:
-            chord_texts (tp.List[str]): list of strings of harmonic tokens
-            downbeat_times (tp.List[tp.List[float]]): list of list of downbeat times
+            chord_texts (str): string of harmonic tokens
+            downbeat_times (tp.List[float]): list of downbeat times
 
         Returns:
             torch.Tensor: chromatic features 
@@ -1517,8 +1520,7 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
                   `1/n` of the measure duration
                 - for example "A:min,C,G,D" is a single measure, each token accounting
                   for 1/4th of the measure
-        - each list in `downbeat_times` must have one more downbeat than each `chord_texts` 
-          has measures
+        - `downbeat_times` must have one more downbeat than `chord_texts` has measures
         
         Example:
         >>> chord_texts = [["A:min E:min C,D:7 G"]]
@@ -1526,37 +1528,30 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
         >>> _chord_texts2chroma(chord_texts, downbeat_times)
         """
 
-        assert len(chord_texts) == len(downbeat_times), "must have same number of `downbeat_times` as `chord_texts`"
+        measures = chord_text.split(' ')
+        assert len(measures) == len(downbeat_times)-1, "`downbeat_times` must have one more downbeat than `chord_texts` has measures"
 
-        results = []
-        for text, times in zip(chord_texts, downbeat_times):
+        features = torch.zeros(size=[self.num_frames, len(self.chroma_indices)])
 
-            features = torch.zeros(size=[self.num_frames, len(self.chroma_indices)])
+        for n, measure in enumerate(measures):
+            tokens = measure.split(',')
+            measure_start_time = downbeat_times[n]
+            measure_end_time = downbeat_times[n+1]
+            token_times = np.linspace(measure_start_time, measure_end_time, num=len(tokens)+1, endpoint=True)
 
-            measures = text.split(' ')
-            assert len(measure) == len(downbeat_times)-1, "each list in `downbeat_times` must have one more downbeat than each `chord_texts` has measures"
-            for n, measure in enumerate(measures):
-                tokens = measure.split(',')
-                measure_start_time = times[n]
-                measure_end_time = times[n+1]
-                token_times = np.linspace(measure_start_time, measure_end_time, num=len(tokens)+1, endpoint=True)
+            for n, token in enumerate(tokens):
+                
+                root, _, intervals, _ = self.chords.chord(token)
+                chroma = np.roll(intervals, root)
 
-                for n, token in enumerate(tokens):
-                    
-                    root, _, intervals, _ = self.chords.chord(token)
-                    chroma = np.roll(intervals, root)
+                start_frame = round(token_times[n] * self.frames_per_second)
+                end_frame = round(token_times[n+1] * self.frames_per_second)
+                frames = np.arange(start=start_frame, stop=end_frame)
+                num_frames = end_frame - start_frame
 
+                features[frames, :] = torch.Tensor(np.tile(chroma, (num_frames, 1)))
 
-                    start_frame = round(token_times[n] * self.frames_per_second)
-                    end_frame = round(token_times[n+1] * self.frames_per_second)
-                    frames = np.arange(start=start_frame, stop=end_frame)
-                    num_frames = start_frame - end_frame
-
-                    features[:, frames] = torch.Tensor(np.repeat(chroma, num_frames))
-
-            results.append(features)
-
-        return results
+        return features
                 
                 
 
