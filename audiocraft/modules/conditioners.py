@@ -1421,6 +1421,11 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
             for batch, (chords, downbeat) in enumerate(zip(chords_text, downbeats)):
 
                 if chords and downbeat:
+
+                    if isinstance(downbeat, str):
+                        downbeat = downbeat.split(',')
+                        downbeat = [float(t) for t in downbeat]
+
                     number_of_bars_in_chords_text = chords.count(' ')
                     number_of_bars_in_downbeats = len(downbeat)
                     if number_of_bars_in_chords_text is not number_of_bars_in_downbeats:
@@ -1436,8 +1441,6 @@ class BeatChromaChordConditioner(ChromaStemConditioner):
                     pass
             
                 features[batch, :, :] = feature
-            
-            
 
         if self.match_len_on_eval:
             B, T, C = features.shape
